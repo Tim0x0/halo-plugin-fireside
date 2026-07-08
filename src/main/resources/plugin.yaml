@@ -5,6 +5,12 @@ kind: Plugin
 metadata:
   # The name defines how the plugin is invoked, A unique name
   name: plugin-fireside
+  annotations:
+    # 应用市场（1.17.0+）安装/升级后据此提示安装前置应用与推荐应用
+    # 链接管理：https://www.halo.run/store/apps/app-hfbQg
+    "store.halo.run/required-apps": '["app-hfbQg"]'
+    # 瞬间：https://www.halo.run/store/apps/app-SnwWD
+    "store.halo.run/recommended-apps": '["app-SnwWD"]'
 spec:
   enabled: true
   requires: ">=2.22.0"
