@@ -4,6 +4,14 @@ metadata:
   name: plugin-fireside-settings
 spec:
   forms:
+    - group: display
+      label: 展示设置
+      formSchema:
+        - $formkit: text
+          name: friendTag
+          label: 友链动态标签
+          value: 友链
+          help: 赋给每条友链动态的标签名（spec.tags）；主题可用 ?tag=该标签 在 /moments 仅筛出友链动态。留空则使用默认值「友链」
     - group: sync
       label: 同步设置
       formSchema:

@@ -5,6 +5,7 @@ import static run.halo.app.extension.index.query.Queries.equal;
 import static run.halo.app.extension.index.query.Queries.isNull;
 
 import com.timxs.fireside.FiresideConst;
+import com.timxs.fireside.config.DisplayConfig;
 import com.timxs.fireside.extension.FriendMoment;
 import com.timxs.fireside.stub.Moment;
 import com.timxs.fireside.vo.FiresideMomentVo;
@@ -29,6 +30,7 @@ import run.halo.app.extension.ListResult;
 import run.halo.app.extension.PageRequestImpl;
 import run.halo.app.extension.ReactiveExtensionClient;
 import run.halo.app.extension.SchemeManager;
+import run.halo.app.plugin.ReactiveSettingFetcher;
 import run.halo.app.theme.finders.Finder;
 import run.halo.app.theme.router.UrlContextListResult;
 
@@ -54,6 +56,7 @@ public class FiresideFinderImpl {
 
     private final ReactiveExtensionClient client;
     private final SchemeManager schemeManager;
+    private final ReactiveSettingFetcher settingFetcher;
 
     /**
      * 混排时间线：自身瞬间 + 友链条目，按发布时间倒序归并分页。
@@ -63,7 +66,9 @@ public class FiresideFinderImpl {
     }
 
     /**
-     * tag 重载：主题使用 ?tag= 过滤时传入；tag 非空时仅返回自身瞬间（友链条目无本站标签）。
+     * tag 重载：主题使用 ?tag= 过滤时传入。
+     * tag 等于设置中的「友链动态标签」时仅返回友链条目；
+     * tag 为其它非空值时仅返回自身瞬间（按本站标签过滤）。
      */
     public Mono<UrlContextListResult<FiresideMomentVo>> timeline(Integer page, Integer size,
         String tag) {
@@ -71,13 +76,21 @@ public class FiresideFinderImpl {
         int s = sizeNullSafe(size);
         // 两源各取前 page*size 条，内存归并后截取当前页窗口
         int window = p * s;
-        var selfMono = listSelfTop(window, tag);
-        var friendMono = StringUtils.isBlank(tag)
-            ? client.listBy(FriendMoment.class, friendOptions(null),
-                PageRequestImpl.of(1, window, FRIEND_SORT))
-            : Mono.just(new ListResult<FriendMoment>(1, window, 0L, List.of()));
-        return Mono.zip(selfMono, friendMono)
-            .flatMap(tuple -> assembleTimeline(tuple.getT1(), tuple.getT2(), p, s, tag));
+        return displayConfig().flatMap(display -> {
+            String friendTag = display.effectiveFriendTag();
+            boolean friendOnly = StringUtils.isNotBlank(tag) && tag.equals(friendTag);
+            boolean selfOnly = StringUtils.isNotBlank(tag) && !friendOnly;
+            var selfMono = friendOnly
+                ? Mono.just(new ListResult<Moment>(1, window, 0L, List.of()))
+                : listSelfTop(window, selfOnly ? tag : null);
+            var friendMono = selfOnly
+                ? Mono.just(new ListResult<FriendMoment>(1, window, 0L, List.of()))
+                : client.listBy(FriendMoment.class, friendOptions(null),
+                    PageRequestImpl.of(1, window, FRIEND_SORT));
+            return Mono.zip(selfMono, friendMono)
+                .flatMap(tuple ->
+                    assembleTimeline(tuple.getT1(), tuple.getT2(), p, s, tag, friendTag));
+        });
     }
 
     /**
@@ -91,10 +104,12 @@ public class FiresideFinderImpl {
         String linkName) {
         int p = pageNullSafe(page);
         int s = sizeNullSafe(size);
-        return client.listBy(FriendMoment.class, friendOptions(linkName),
-                PageRequestImpl.of(p, s, FRIEND_SORT))
+        return displayConfig().flatMap(display -> client.listBy(FriendMoment.class,
+                friendOptions(linkName), PageRequestImpl.of(p, s, FRIEND_SORT))
             .map(list -> new ListResult<>(list.getPage(), list.getSize(), list.getTotal(),
-                list.getItems().stream().map(this::friendVo).toList()));
+                list.getItems().stream()
+                    .map(fm -> friendVo(fm, display.effectiveFriendTag()))
+                    .toList())));
     }
 
     /**
@@ -119,7 +134,7 @@ public class FiresideFinderImpl {
 
     private Mono<UrlContextListResult<FiresideMomentVo>> assembleTimeline(
         ListResult<Moment> self, ListResult<FriendMoment> friends, int page, int size,
-        String tag) {
+        String tag, String friendTag) {
         long total = self.getTotal() + friends.getTotal();
         List<TimelineItem> merged = mergeByTimeDesc(self.getItems(), friends.getItems());
 
@@ -132,7 +147,7 @@ public class FiresideFinderImpl {
             .flatMap(users -> Flux.fromIterable(pageItems)
                 .concatMap(item -> item.self() != null
                     ? selfVo(item.self(), users)
-                    : Mono.just(friendVo(item.friend())))
+                    : Mono.just(friendVo(item.friend(), friendTag)))
                 .collectList())
             .map(vos -> new UrlContextListResult.Builder<FiresideMomentVo>()
                 .listResult(new ListResult<>(page, size, total, vos))
@@ -234,7 +249,7 @@ public class FiresideFinderImpl {
             .build();
     }
 
-    private FiresideMomentVo friendVo(FriendMoment friendMoment) {
+    private FiresideMomentVo friendVo(FriendMoment friendMoment, String friendTag) {
         var spec = friendMoment.getSpec();
         var medium = spec.getImages() == null ? List.<FiresideMomentVo.MediaVo>of()
             : spec.getImages().stream()
@@ -253,7 +268,7 @@ public class FiresideFinderImpl {
                 ? spec.getPubDate() : friendMoment.getMetadata().getCreationTimestamp())
             .visible(FiresideMomentVo.Visible.PUBLIC)
             .owner(spec.getLinkName())
-            .tags(Set.of())
+            .tags(StringUtils.isBlank(friendTag) ? Set.of() : Set.of(friendTag))
             .approved(true)
             .build();
         var owner = FiresideMomentVo.OwnerVo.builder()
@@ -298,6 +313,12 @@ public class FiresideFinderImpl {
                 .approvedComment(counter.getApprovedComment())
                 .build())
             .defaultIfEmpty(FiresideMomentVo.StatsVo.empty());
+    }
+
+    private Mono<DisplayConfig> displayConfig() {
+        return settingFetcher.fetch(DisplayConfig.GROUP, DisplayConfig.class)
+            .defaultIfEmpty(new DisplayConfig())
+            .onErrorReturn(new DisplayConfig());
     }
 
     private ListOptions friendOptions(String linkName) {
