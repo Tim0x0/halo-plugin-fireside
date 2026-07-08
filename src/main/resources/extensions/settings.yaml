@@ -1,0 +1,42 @@
+apiVersion: v1alpha1
+kind: Setting
+metadata:
+  name: plugin-fireside-settings
+spec:
+  forms:
+    - group: sync
+      label: 同步设置
+      formSchema:
+        - $formkit: checkbox
+          name: enabled
+          label: 启用定时同步
+          value: true
+          help: 关闭后停止定时抓取友链 RSS，已抓取的数据保留
+        - $formkit: number
+          name: intervalMinutes
+          label: 同步间隔（分钟）
+          value: 60
+          min: 5
+          validation: required|min:5
+          help: 每隔多久抓取一次友链 RSS
+        - $formkit: number
+          name: maxLinksPerRun
+          label: 每轮最多处理的友链数
+          value: 20
+          min: 1
+          validation: required|min:1
+        - $formkit: number
+          name: retainPerLink
+          label: 每个友链保留的最新条数
+          value: 20
+          min: 1
+          max: 100
+          validation: required|min:1|max:100
+          help: 超出后按发布时间删除最旧的条目
+        - $formkit: number
+          name: timeoutSeconds
+          label: 抓取超时（秒）
+          value: 10
+          min: 1
+          max: 60
+          validation: required|min:1|max:60

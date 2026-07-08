@@ -1,0 +1,29 @@
+# Refer https://docs.halo.run/developer-guide/plugin/basics/manifest
+
+apiVersion: plugin.halo.run/v1alpha1
+kind: Plugin
+metadata:
+  # The name defines how the plugin is invoked, A unique name
+  name: plugin-fireside
+spec:
+  enabled: true
+  requires: ">=2.22.0"
+  author:
+    name: Tim0x0
+    website: https://github.com/Tim0x0
+  logo: logo.png
+  homepage: https://github.com/Tim0x0/halo-plugin-fireside#readme
+  repo: https://github.com/Tim0x0/halo-plugin-fireside
+  issues: https://github.com/Tim0x0/halo-plugin-fireside/issues
+  displayName: "围炉"
+  description: "围炉——把友链的动态围进你的 /moments 时间线，像朋友圈一样"
+  license:
+    - name: "GPL-3.0"
+      url: "https://github.com/Tim0x0/halo-plugin-fireside/blob/main/LICENSE"
+  settingName: plugin-fireside-settings
+  configMapName: plugin-fireside-configmap
+  pluginDependencies:
+    # 硬依赖：动态 RSS 地址元数据挂在链接插件的 Link 上
+    "PluginLinks": ">=2.0.0"
+    # 可选依赖：未装瞬间插件时时间线只含友链条目，插件不崩
+    "PluginMoments?": "*"

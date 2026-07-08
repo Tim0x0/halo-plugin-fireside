@@ -1,0 +1,14 @@
+apiVersion: v1alpha1
+kind: AnnotationSetting
+metadata:
+  generateName: annotation-setting-
+spec:
+  targetRef:
+    group: core.halo.run
+    kind: Link
+  formSchema:
+    - $formkit: url
+      name: fireside_rss_url
+      label: 动态 RSS 地址
+      validation: url
+      help: 填写对方站点任意 RSS/Atom 地址，填写后其动态将进入朋友圈时间线；留空则不订阅。（若对方为 Halo 且装有瞬间+RSS 插件，其瞬间 RSS 一般为 https://对方域名/feed/moments/rss.xml，仅供参考）

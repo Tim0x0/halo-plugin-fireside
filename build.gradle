@@ -1,0 +1,50 @@
+plugins {
+    id 'java'
+    id "io.freefair.lombok" version "9.2.0"
+    id "run.halo.plugin.devtools" version "0.8.0"
+}
+
+group 'com.timxs.fireside'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation platform('run.halo.tools.platform:plugin:2.25.0')
+    compileOnly 'run.halo.app:api'
+    // jsoup 由 Halo 宿主 classpath 提供，不打进插件 jar
+    compileOnly 'org.jsoup:jsoup:1.17.2'
+    // RSS/Atom 解析，打进插件 jar
+    implementation 'com.rometools:rome:2.1.0'
+
+    testImplementation 'run.halo.app:api'
+    testImplementation 'org.jsoup:jsoup:1.17.2'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = 21
+}
+
+
+tasks.named('generatePluginComponentsIdx') {
+    notCompatibleWithConfigurationCache('This task invokes "Task.project" at execution time, which is not supported with configuration cache.')
+}
+
+halo {
+    version = '2.25'
+}
+
