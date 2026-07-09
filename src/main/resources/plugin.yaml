@@ -22,7 +22,7 @@ spec:
   repo: https://github.com/Tim0x0/halo-plugin-fireside
   issues: https://github.com/Tim0x0/halo-plugin-fireside/issues
   displayName: "围炉"
-  description: "围炉——把友链的动态围进你的 /moments 时间线，像朋友圈一样"
+  description: "聚合友链博主的说说、动态、瞬间，与你自己的瞬间混排成一条朋友圈式时间线，像刷朋友圈一样看到朋友们的近况"
   license:
     - name: "GPL-3.0"
       url: "https://github.com/Tim0x0/halo-plugin-fireside/blob/main/LICENSE"
