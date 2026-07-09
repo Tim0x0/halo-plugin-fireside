@@ -1,7 +1,9 @@
 apiVersion: v1alpha1
 kind: AnnotationSetting
 metadata:
-  generateName: annotation-setting-
+  # 必须用固定 name：Halo 对插件 extensions/ 资源按 metadata.name 做 create-or-update，
+  # 用 generateName 会在每次插件启动/升级时重复创建一份，导致链接表单字段翻倍
+  name: fireside-link-annotation-setting
 spec:
   targetRef:
     group: core.halo.run
