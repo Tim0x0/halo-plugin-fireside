@@ -1,5 +1,6 @@
 package com.timxs.fireside;
 
+import com.timxs.fireside.extension.FeedStatus;
 import com.timxs.fireside.extension.FriendMoment;
 import java.time.Instant;
 import lombok.extern.slf4j.Slf4j;
@@ -55,12 +56,14 @@ public class FiresidePlugin extends BasePlugin {
             indexSpecs.add(IndexSpecs.<FriendMoment, Instant>single("spec.pubDate", Instant.class)
                 .indexFunc(fm -> fm.getSpec().getPubDate()));
         });
+        schemeManager.register(FeedStatus.class);
         cleanupLegacyAnnotationSettings();
     }
 
     @Override
     public void stop() {
         schemeManager.unregister(Scheme.buildFromType(FriendMoment.class));
+        schemeManager.unregister(Scheme.buildFromType(FeedStatus.class));
     }
 
     /**

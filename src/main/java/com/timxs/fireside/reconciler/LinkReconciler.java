@@ -3,6 +3,7 @@ package com.timxs.fireside.reconciler;
 import static run.halo.app.extension.index.query.Queries.equal;
 
 import com.timxs.fireside.FiresideConst;
+import com.timxs.fireside.extension.FeedStatus;
 import com.timxs.fireside.extension.FriendMoment;
 import com.timxs.fireside.stub.Link;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +41,8 @@ public class LinkReconciler implements Reconciler<Reconciler.Request> {
             .orElse(true);
         if (shouldCleanup) {
             deleteFriendMoments(linkName);
+            // 同步状态一并清理（暂停不会走到这里，暂停时状态保留）
+            client.fetch(FeedStatus.class, linkName).ifPresent(client::delete);
         }
         return Result.doNotRetry();
     }

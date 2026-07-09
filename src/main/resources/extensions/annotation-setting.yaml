@@ -14,3 +14,7 @@ spec:
       label: 动态 RSS 地址
       validation: url
       help: 填写对方站点任意 RSS/Atom 地址，填写后其动态将进入朋友圈时间线；留空则不订阅。（若对方为 Halo 且装有瞬间+RSS 插件，其瞬间 RSS 一般为 https://对方域名/feed/moments/rss.xml，仅供参考）
+    - $formkit: checkbox
+      name: fireside_paused
+      label: 暂停同步
+      help: 勾选后暂停抓取该友链的动态，已抓取的数据保留并继续展示；取消勾选恢复同步。（清空 RSS 地址则会删除该友链的全部动态）

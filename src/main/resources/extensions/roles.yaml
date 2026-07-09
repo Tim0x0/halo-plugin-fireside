@@ -1,0 +1,38 @@
+apiVersion: v1alpha1
+kind: Role
+metadata:
+  name: role-template-fireside-manage
+  labels:
+    halo.run/role-template: "true"
+  annotations:
+    rbac.authorization.halo.run/module: "围炉"
+    rbac.authorization.halo.run/display-name: "围炉管理"
+    rbac.authorization.halo.run/ui-permissions: |
+      ["plugin:fireside:manage"]
+rules:
+  # 友链动态与同步状态的管理（管理页条目流/删除/状态徽章）
+  - apiGroups: [ "fireside.timxs.com" ]
+    resources: [ "friendmoments", "feedstatuses" ]
+    verbs: [ "get", "list", "create", "update", "patch", "delete", "deletecollection" ]
+  # 手动同步（子资源动作）
+  - apiGroups: [ "console.api.fireside.timxs.com" ]
+    resources: [ "links/sync" ]
+    verbs: [ "create" ]
+  # 管理页需要读取友链列表并切换暂停注解
+  - apiGroups: [ "core.halo.run" ]
+    resources: [ "links" ]
+    verbs: [ "get", "list", "update", "patch" ]
+---
+apiVersion: v1alpha1
+kind: Role
+metadata:
+  name: role-template-fireside-anonymous
+  labels:
+    halo.run/role-template: "true"
+    halo.run/hidden: "true"
+    rbac.authorization.halo.run/aggregate-to-anonymous: "true"
+rules:
+  # 公开时间线 API（主题前端 JS 无限滚动），输出仅公开内容
+  - apiGroups: [ "api.fireside.timxs.com" ]
+    resources: [ "timeline" ]
+    verbs: [ "get", "list" ]

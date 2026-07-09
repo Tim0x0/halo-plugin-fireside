@@ -39,8 +39,11 @@ public class RssSyncScheduler {
         }
         lastRunAt = now;
         try {
-            // @Scheduled 单线程串行，方法体阻塞到本轮结束，天然不重叠
-            syncService.syncAll(config);
+            // @Scheduled 单线程串行，方法体阻塞到本轮结束，天然不重叠；
+            // 与手动同步之间由服务内部的锁互斥
+            syncService.syncScheduled(config);
+        } catch (IllegalStateException e) {
+            log.info("[围炉] 跳过本轮定时同步：{}", e.getMessage());
         } catch (Exception e) {
             log.error("[围炉] 本轮同步执行失败", e);
         }
