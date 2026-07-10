@@ -245,13 +245,14 @@ public class RssSyncService {
         String baseUri = siteBase != null ? siteBase : feedUrl;
 
         String rawHtml = extractRawHtml(entry);
-        // Safelist.basicWithImages = basic 白名单 + img[src]，a 自动强制 rel=nofollow；
-        // 传入 baseUri 后相对 URL 会被绝对化（无法绝对化且不满足协议白名单的属性被移除）
+        // 图片从原始 HTML 提取进 images（映射为九宫格 medium），正文清洗用不含 img 的
+        // Safelist.basic()（a 自动强制 rel=nofollow、相对 URL 绝对化）——若正文也保留 img，
+        // 主题会在正文和九宫格各渲染一次，图片重复
+        List<String> images = extractImages(rawHtml, baseUri);
         String contentHtml = rawHtml == null ? ""
-            : Jsoup.clean(rawHtml, postLink, Safelist.basicWithImages());
+            : Jsoup.clean(rawHtml, postLink, Safelist.basic());
         String contentText = rawHtml == null ? ""
             : StringUtils.abbreviate(Jsoup.parse(rawHtml).text(), CONTENT_TEXT_MAX_LENGTH);
-        List<String> images = extractImages(contentHtml, baseUri);
 
         var spec = new FriendMoment.FriendMomentSpec();
         spec.setLinkName(link.getMetadata().getName());
@@ -286,12 +287,15 @@ public class RssSyncService {
             .orElse(null);
     }
 
-    private List<String> extractImages(String contentHtml, String baseUri) {
-        if (StringUtils.isBlank(contentHtml)) {
+    /**
+     * 从原始 HTML 提取图片地址（absUrl 以 baseUri 绝对化，去重保序）。
+     */
+    private List<String> extractImages(String rawHtml, String baseUri) {
+        if (StringUtils.isBlank(rawHtml)) {
             return List.of();
         }
         var srcSet = new LinkedHashSet<String>();
-        for (var img : Jsoup.parse(contentHtml, baseUri).select("img[src]")) {
+        for (var img : Jsoup.parse(rawHtml, baseUri).select("img[src]")) {
             String src = img.absUrl("src");
             if (StringUtils.isNotBlank(src)) {
                 srcSet.add(src);
