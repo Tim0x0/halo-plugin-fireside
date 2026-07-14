@@ -9,6 +9,7 @@ import static run.halo.app.extension.index.query.Queries.or;
 import com.timxs.fireside.FiresideConst;
 import com.timxs.fireside.config.DisplayConfig;
 import com.timxs.fireside.extension.FriendMoment;
+import com.timxs.fireside.stub.Link;
 import com.timxs.fireside.stub.Moment;
 import com.timxs.fireside.vo.FiresideMomentVo;
 import com.timxs.fireside.vo.FiresideTagVo;
@@ -130,10 +131,14 @@ public class FiresideFinderImpl {
         int s = sizeNullSafe(size);
         return displayConfig().flatMap(display -> client.listBy(FriendMoment.class,
                 friendOptions(linkName), PageRequestImpl.of(p, s, FRIEND_SORT))
-            .map(list -> new ListResult<>(list.getPage(), list.getSize(), list.getTotal(),
-                list.getItems().stream()
-                    .map(fm -> friendVo(fm, display.effectiveFriendTag()))
-                    .toList())));
+            .flatMap(list -> preloadLinks(list.getItems())
+                .map(links -> new ListResult<>(list.getPage(), list.getSize(), list.getTotal(),
+                    list.getItems().stream()
+                        // 脏数据（spec=null）跳过不炸页，同 assembleTimeline
+                        .filter(fm -> fm.getSpec() != null)
+                        .map(fm -> friendVo(fm, display.effectiveFriendTag(),
+                            links.get(linkNameOf(fm))))
+                        .toList()))));
     }
 
     /**
@@ -238,7 +243,12 @@ public class FiresideFinderImpl {
         ListResult<Moment> self, ListResult<FriendMoment> friends, int page, int size,
         int window, String tag, String friendTag) {
         long total = self.getTotal() + friends.getTotal();
-        List<TimelineItem> merged = mergeByTimeDesc(self.getItems(), friends.getItems());
+        // spec 为 null 的脏数据（API 直建可绕过 schema 校验）逐条跳过而非拖垮整页——
+        // 对齐链接插件对坏条目的降级处理（NitriteLinkFeedItemStore.parseDocument）；
+        // total 保持如实，异常态下页内少一条可接受
+        List<TimelineItem> merged = mergeByTimeDesc(
+            self.getItems().stream().filter(m -> m.getSpec() != null).toList(),
+            friends.getItems().stream().filter(fm -> fm.getSpec() != null).toList());
 
         // 归并结果只有前 window 条能保证全局有序（两源各取 top-window，之后的条目
         // 缺失中间排名），超出窗口宁可返回空页也不返回错序数据；long 计算防大页码溢出
@@ -254,11 +264,16 @@ public class FiresideFinderImpl {
         int lastReachablePage =
             (int) Math.max(1, Math.min(totalPages(total, size), capByWindow));
 
-        return preloadUsers(pageItems)
-            .flatMap(users -> Flux.fromIterable(pageItems)
+        List<FriendMoment> friendsOnPage = pageItems.stream()
+            .map(TimelineItem::friend)
+            .filter(Objects::nonNull)
+            .toList();
+        return Mono.zip(preloadUsers(pageItems), preloadLinks(friendsOnPage))
+            .flatMap(preloaded -> Flux.fromIterable(pageItems)
                 .concatMap(item -> item.self() != null
-                    ? selfVo(item.self(), users)
-                    : Mono.just(friendVo(item.friend(), friendTag)))
+                    ? selfVo(item.self(), preloaded.getT1())
+                    : Mono.just(friendVo(item.friend(), friendTag,
+                        preloaded.getT2().get(linkNameOf(item.friend())))))
                 .collectList())
             .map(vos -> new UrlContextListResult.Builder<FiresideMomentVo>()
                 .listResult(new ListResult<>(page, size, total, vos))
@@ -306,6 +321,27 @@ public class FiresideFinderImpl {
             .flatMap(owner -> userService.getUserOrGhost(owner)
                 .map(user -> Map.entry(owner, user)))
             .collectMap(Map.Entry::getKey, Map.Entry::getValue);
+    }
+
+    /**
+     * FRIEND 条目的来源 Link 按 linkName 去重后批量预载（preloadUsers 同款模式）。
+     * Link 已删除的条目（级联清理完成前的窗口期）fetch 为空，不入 Map，
+     * 组装时回退条目入库的快照字段。Link scheme 由链接插件（硬依赖）注册，恒可查。
+     */
+    private Mono<Map<String, Link>> preloadLinks(List<FriendMoment> friendMoments) {
+        var linkNames = friendMoments.stream()
+            .map(FiresideFinderImpl::linkNameOf)
+            .filter(StringUtils::isNotBlank)
+            .distinct()
+            .toList();
+        return Flux.fromIterable(linkNames)
+            .flatMap(name -> client.fetch(Link.class, name)
+                .map(link -> Map.entry(name, link)))
+            .collectMap(Map.Entry::getKey, Map.Entry::getValue);
+    }
+
+    private static String linkNameOf(FriendMoment friendMoment) {
+        return friendMoment.getSpec() == null ? null : friendMoment.getSpec().getLinkName();
     }
 
     private Mono<FiresideMomentVo> selfVo(Moment moment, Map<String, User> users) {
@@ -365,8 +401,20 @@ public class FiresideFinderImpl {
             .build();
     }
 
-    private FiresideMomentVo friendVo(FriendMoment friendMoment, String friendTag) {
+    /**
+     * FRIEND 条目组装（调用方已过滤 spec 为 null 的脏数据，此处 spec 恒非 null）：
+     * 作者展示信息（昵称/头像/简介/站点地址）以 Link 现值优先——
+     * 友链改昵称、换头像后历史条目即时跟随（对齐官方链接插件 LinkFeedFinderImpl）；
+     * Link 现值整体取用而非逐字段回退：友链清空头像等"现值为空"是站长的真实意图，
+     * 逐字段回退会让已删除的旧值复活。Link 取不到时才整体回退入库快照。
+     */
+    private FiresideMomentVo friendVo(FriendMoment friendMoment, String friendTag, Link link) {
         var spec = friendMoment.getSpec();
+        var linkSpec = link == null ? null : link.getSpec();
+        String author = linkSpec != null ? linkSpec.getDisplayName() : spec.getAuthor();
+        String avatar = linkSpec != null ? linkSpec.getLogo() : spec.getLogo();
+        String bio = linkSpec != null ? linkSpec.getDescription() : spec.getAuthorBio();
+        String authorUrl = linkSpec != null ? linkSpec.getUrl() : spec.getAuthorUrl();
         List<FiresideMomentVo.MediaVo> medium = spec.getMedia() == null ? List.of()
             : spec.getMedia().stream()
                 .map(item -> FiresideMomentVo.MediaVo.builder()
@@ -390,9 +438,9 @@ public class FiresideFinderImpl {
             .build();
         var owner = FiresideMomentVo.OwnerVo.builder()
             .name(spec.getLinkName())
-            .displayName(StringUtils.defaultIfBlank(spec.getAuthor(), spec.getLinkName()))
-            .avatar(spec.getLogo())
-            .bio(spec.getAuthorBio())
+            .displayName(StringUtils.defaultIfBlank(author, spec.getLinkName()))
+            .avatar(avatar)
+            .bio(bio)
             .build();
         return FiresideMomentVo.builder()
             .metadata(friendMoment.getMetadata())
@@ -401,7 +449,7 @@ public class FiresideFinderImpl {
             .stats(FiresideMomentVo.StatsVo.empty())
             .external(true)
             .sourceUrl(spec.getPostLink())
-            .authorUrl(spec.getAuthorUrl())
+            .authorUrl(authorUrl)
             .title(spec.getTitle())
             .build();
     }

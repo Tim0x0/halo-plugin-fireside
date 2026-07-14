@@ -15,6 +15,9 @@ import run.halo.app.extension.GVK;
  * 友链动态条目：定时抓取友链 RSS 后落库的单条动态。
  * 去重键为 spec.linkName + spec.postLink（限定友链内，防跨友链抢注）；
  * spec.linkName 关联来源 Link，用于级联清理与按友链过滤。
+ * 作者信息四字段（author/authorUrl/authorBio/logo）是入库时刻的 Link 快照：
+ * 输出层（Finder/公开 API）以 Link 现值优先，仅在 Link 已删除
+ * （级联清理完成前的窗口期）时回退这些快照字段。
  */
 @GVK(group = "fireside.timxs.com", version = "v1alpha1", kind = "FriendMoment",
     plural = "friendmoments", singular = "friendmoment")
@@ -32,16 +35,16 @@ public class FriendMoment extends AbstractExtension {
         @Schema(requiredMode = REQUIRED, description = "来源 Link 的 metadata.name")
         private String linkName;
 
-        @Schema(description = "作者昵称，冗余自 Link 的 displayName")
+        @Schema(description = "作者昵称，入库时快照自 Link 的 displayName（输出以 Link 现值优先）")
         private String author;
 
-        @Schema(description = "作者站点地址，冗余自 Link 的 url")
+        @Schema(description = "作者站点地址，入库时快照自 Link 的 url（输出以 Link 现值优先）")
         private String authorUrl;
 
-        @Schema(description = "作者简介，冗余自 Link 的 description")
+        @Schema(description = "作者简介，入库时快照自 Link 的 description（输出以 Link 现值优先）")
         private String authorBio;
 
-        @Schema(description = "作者头像，冗余自 Link 的 logo")
+        @Schema(description = "作者头像，入库时快照自 Link 的 logo（输出以 Link 现值优先）")
         private String logo;
 
         @Schema(description = "RSS 条目标题，可空，原样存储不做语义判断")
