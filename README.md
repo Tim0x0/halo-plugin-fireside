@@ -11,30 +11,31 @@
 - **数据隔离**：友链条目存独立模型 `FriendMoment`，不污染自己的瞬间数据；
 - **实时混排**：自己的瞬间实时直读（发布后刷新即见），友链条目由定时同步落库（请求路径零远程 HTTP）；
 - **安全**：外部 HTML 经 jsoup 白名单清洗（防 XSS）、图片/链接绝对化、SSRF 内网地址防护、未来时间戳钳制；
-- **自动清理**：按 `postLink` 去重、每友链保留最新 N 条、友链删除或取消订阅时级联清理；
-- **Console 管理页**：左侧订阅列表（同步状态徽章）+ 动态条目流，支持手动同步（单个/全部）、暂停订阅（不删数据）、删除条目、清空数据；
+- **自动清理**：同一友链内按 `postLink` 去重、每友链保留最新 N 条、友链删除或取消订阅时级联清理；
+- **Console 管理页**：左侧订阅列表（同步状态徽章）+ 动态条目流，支持手动同步（单个/全部）、暂停订阅（不删数据）、隐藏/恢复条目（隐藏后不对外展示且不会被重新抓取）、清空数据；
 - **公开时间线 API**：匿名 JSON 接口供主题 JS 无限滚动加载。
 
 ## 环境要求
 
-- Halo `>= 2.22.0`
+- Halo `>= 2.25.0`
 - [链接插件 PluginLinks](https://github.com/halo-sigs/plugin-links)（必需）
-- [瞬间插件 PluginMoments](https://github.com/halo-sigs/plugin-moments)（可选：未安装时时间线只含友链条目）
+- [瞬间插件 PluginMoments](https://github.com/halo-sigs/plugin-moments) `>= 1.16.0`（可选：未安装时时间线只含友链条目）
 
 ## 使用
 
 1. 安装并启用本插件；
 2. 在 Console「链接」中编辑某个友链，元数据区填写**动态 RSS 地址**（如对方为 Halo 且装有瞬间 + RSS 插件，一般为 `https://对方域名/feed/moments/rss.xml`；普通文章 RSS 也可以）；勾选**暂停同步**可临时停抓且保留已有数据；
 3. 等待定时同步（默认每 60 分钟，可在插件设置中调整），或在 Console「围炉」管理页点击**同步全部**立即抓取；
-4. 在「围炉」管理页查看各订阅的同步状态、浏览/删除已抓取的动态；
+4. 在「围炉」管理页查看各订阅的同步状态、浏览/隐藏已抓取的动态；
 5. 按下文改一行主题模板，访问 `/moments` 查看混排时间线。
 
 ### 管理端 API
 
-手动同步（子资源动作，需管理权限）：
+手动同步与清空（子资源动作，需管理权限；两者互斥，冲突时返回 409）：
 
 ```
-POST /apis/console.api.fireside.timxs.com/v1alpha1/links/{name}/sync   # name 为链接名，- 表示全量
+POST /apis/console.api.fireside.timxs.com/v1alpha1/links/{name}/sync            # 同步，name 为链接名，- 表示全量
+POST /apis/console.api.fireside.timxs.com/v1alpha1/links/{name}/clear-moments   # 清空已抓取动态，- 表示全部
 ```
 
 ### 公开时间线 API（匿名）
