@@ -1,16 +1,23 @@
 <script lang="ts" setup>
 import { axiosInstance } from '@halo-dev/api-client'
 import { Dialog, Toast, VButton, VEmpty, VLoading, VPageHeader, VSpace } from '@halo-dev/components'
+import { utils } from '@halo-dev/ui-shared'
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import RiFireLine from '~icons/ri/fire-line'
+import RiArrowLeftLine from '~icons/ri/arrow-left-line'
 import RiPauseCircleLine from '~icons/ri/pause-circle-line'
 import RiPlayCircleLine from '~icons/ri/play-circle-line'
 import RiRefreshLine from '~icons/ri/refresh-line'
 import RiDeleteBinLine from '~icons/ri/delete-bin-line'
 import RiExternalLinkLine from '~icons/ri/external-link-line'
+import RiEyeOffLine from '~icons/ri/eye-off-line'
+import RiEyeLine from '~icons/ri/eye-line'
+import RiRssLine from '~icons/ri/rss-line'
 import {
   PAUSED_ANNO,
   RSS_URL_ANNO,
+  type ClearResponse,
   type FeedStatus,
   type FriendMoment,
   type Link,
@@ -20,12 +27,15 @@ import {
 
 const PAGE_SIZE = 20
 
+const router = useRouter()
+
 const links = ref<Link[]>([])
 const statuses = ref<Map<string, FeedStatus>>(new Map())
 const moments = ref<FriendMoment[]>([])
 const total = ref(0)
 const page = ref(1)
 const selectedLinkName = ref<string>('')
+const showHidden = ref(false)
 
 const loadingList = ref(false)
 const loadingLinks = ref(false)
@@ -33,8 +43,18 @@ const syncingLink = ref(false)
 const syncingAll = ref(false)
 const togglingPause = ref(false)
 const clearing = ref(false)
+// 隐藏/恢复进行中的条目名集合，防止连点并发 PUT 撞乐观锁
+const togglingNames = ref<Set<string>>(new Set())
+
+// 同步与清空互斥：清空会重置计数，与同步并发会产生错乱结果（后端 409 兜底，这里前置禁用）
+const mutating = computed(() => syncingAll.value || syncingLink.value || clearing.value)
 
 const totalPages = computed(() => Math.max(Math.ceil(total.value / PAGE_SIZE), 1))
+
+// Halo 删除是先打标记异步真删，过滤掉删除中的条目避免闪现
+const visibleMoments = computed(() =>
+  moments.value.filter((m) => !m.metadata.deletionTimestamp),
+)
 
 const selectedLink = computed(() =>
   links.value.find((link) => link.metadata.name === selectedLinkName.value),
@@ -49,12 +69,27 @@ const selectedTitle = computed(() => {
   return displayNameOf(selectedLink.value)
 })
 
+const totalItemCount = computed(() =>
+  links.value.reduce((sum, link) => sum + Number(itemCountOf(link)), 0),
+)
+
+const failedCount = computed(
+  () => links.value.filter((link) => statuses.value.get(link.metadata.name)?.spec?.lastError).length,
+)
+
 const selectedMeta = computed(() => {
   if (!selectedLink.value) {
-    return `${links.value.length} 个订阅 / ${total.value} 条动态`
+    return `${links.value.length} 个订阅 / ${totalItemCount.value} 条动态`
   }
-  const itemCount = selectedStatus.value?.spec?.itemCount ?? total.value
-  return `${itemCount} 条动态`
+  const spec = selectedStatus.value?.spec
+  const parts = [`${spec?.itemCount ?? 0} 条动态`]
+  if (spec?.lastSuccessAt) {
+    parts.push(`上次同步 ${formatDate(spec.lastSuccessAt)}`)
+  }
+  if (spec?.latestPublishedAt) {
+    parts.push(`最新动态 ${formatDate(spec.latestPublishedAt)}`)
+  }
+  return parts.join(' / ')
 })
 
 interface StatusMeta {
@@ -65,12 +100,8 @@ interface StatusMeta {
 
 const selectedStatusMeta = computed<StatusMeta>(() => {
   if (!selectedLink.value) {
-    const failed = links.value.filter((link) => {
-      const s = statuses.value.get(link.metadata.name)
-      return s?.spec?.lastError
-    }).length
     if (!links.value.length) return { tone: 'muted', label: '暂无订阅' }
-    if (failed) return { tone: 'error', label: `${failed} 个订阅同步失败` }
+    if (failedCount.value) return { tone: 'error', label: `${failedCount.value} 个订阅同步失败` }
     return { tone: 'success', label: '订阅正常' }
   }
   if (isPaused(selectedLink.value)) {
@@ -87,11 +118,11 @@ function statusMetaOf(status?: FeedStatus): StatusMeta {
   if (spec.lastError) {
     return {
       tone: 'error',
-      label: `同步失败（连续 ${spec.failureCount ?? 1} 次）`,
+      label: `同步失败 · 连续 ${spec.failureCount ?? 1} 次`,
       description: spec.lastError,
     }
   }
-  return { tone: 'success', label: '正常', description: `上次同步：${formatDate(spec.lastSuccessAt)}` }
+  return { tone: 'success', label: '正常' }
 }
 
 function displayNameOf(link: Link) {
@@ -114,14 +145,12 @@ function itemCountOf(link: Link) {
 }
 
 function formatDate(value?: string | null) {
-  if (!value) return '-'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '-'
-  const pad = (n: number) => `${n}`.padStart(2, '0')
-  return (
-    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
-    `${pad(date.getHours())}:${pad(date.getMinutes())}`
-  )
+  // 统一走 Console 的日期工具（YYYY-MM-DD HH:mm），仅补空值占位符
+  return value ? utils.date.format(value) : '-'
+}
+
+function photosOf(moment: FriendMoment) {
+  return (moment.spec.media ?? []).filter((m) => m.type === 'PHOTO').map((m) => m.url)
 }
 
 async function fetchLinks() {
@@ -142,6 +171,8 @@ async function fetchLinks() {
     if (selectedLinkName.value && !links.value.some((l) => l.metadata.name === selectedLinkName.value)) {
       selectedLinkName.value = ''
     }
+  } catch (e) {
+    Toast.error(errorMessage(e, '加载订阅列表失败'))
   } finally {
     loadingLinks.value = false
   }
@@ -150,20 +181,30 @@ async function fetchLinks() {
 async function fetchMoments() {
   loadingList.value = true
   try {
-    const params: Record<string, unknown> = {
-      page: page.value,
-      size: PAGE_SIZE,
-      sort: 'spec.pubDate,desc',
-    }
+    // fieldSelector 多条件必须用重复参数（fieldSelector=a&fieldSelector=b），
+    // 逗号拼接会被当成单个值解析导致 500
+    const query = new URLSearchParams()
+    query.append('page', String(page.value))
+    query.append('size', String(PAGE_SIZE))
+    query.append('sort', 'spec.pubDate,desc')
+    query.append('fieldSelector', `spec.hidden=${showHidden.value}`)
     if (selectedLinkName.value) {
-      params.fieldSelector = `spec.linkName=${selectedLinkName.value}`
+      query.append('fieldSelector', `spec.linkName=${selectedLinkName.value}`)
     }
     const { data } = await axiosInstance.get<ListResult<FriendMoment>>(
-      '/apis/fireside.timxs.com/v1alpha1/friendmoments',
-      { params },
+      `/apis/fireside.timxs.com/v1alpha1/friendmoments?${query.toString()}`,
     )
     moments.value = data.items
     total.value = data.total
+    // 页码超界（如隐藏/删除掉当前页最后一条后）时回退到最后一个有效页重取，
+    // 否则用户停在空页且分页控件可能因 total 缩小而消失
+    const maxPage = Math.max(Math.ceil(data.total / PAGE_SIZE), 1)
+    if (page.value > maxPage) {
+      page.value = maxPage
+      return fetchMoments()
+    }
+  } catch (e) {
+    Toast.error(errorMessage(e, '加载动态列表失败'))
   } finally {
     loadingList.value = false
   }
@@ -176,6 +217,13 @@ async function reload() {
 function selectLink(name: string) {
   if (selectedLinkName.value === name) return
   selectedLinkName.value = name
+  page.value = 1
+  fetchMoments()
+}
+
+function selectTab(hidden: boolean) {
+  if (showHidden.value === hidden) return
+  showHidden.value = hidden
   page.value = 1
   fetchMoments()
 }
@@ -213,7 +261,8 @@ function showSyncSummary(summary: SyncResponse, label: string) {
     Toast.info('没有可同步的订阅')
     return
   }
-  const text = `新增 ${summary.createdCount} 条`
+  const trimmed = summary.results.reduce((sum, r) => sum + (r.trimmed || 0), 0)
+  const text = `新增 ${summary.createdCount} 条${trimmed ? `，按保留策略清理 ${trimmed} 条旧数据` : ''}`
   if (!summary.failureCount) {
     Toast.success(`${label}同步完成：成功 ${summary.successCount} 个，${text}`)
     return
@@ -226,7 +275,9 @@ function showSyncSummary(summary: SyncResponse, label: string) {
     Toast.error(`${label}同步失败：${failText}`)
     return
   }
-  Toast.warning(`${label}同步完成：成功 ${summary.successCount} 个，失败 ${summary.failureCount} 个（${failText}），${text}`)
+  Toast.warning(
+    `${label}同步完成：成功 ${summary.successCount} 个，失败 ${summary.failureCount} 个（${failText}），${text}`,
+  )
 }
 
 async function togglePause() {
@@ -240,7 +291,13 @@ async function togglePause() {
     )
     const annotations = { ...(latest.metadata.annotations || {}) }
     const pausing = annotations[PAUSED_ANNO] !== 'true'
-    annotations[PAUSED_ANNO] = pausing ? 'true' : 'false'
+    if (pausing) {
+      annotations[PAUSED_ANNO] = 'true'
+    } else {
+      // 恢复时直接删除注解而非写 "false"——注解值域保持"只有 true 或不存在"，
+      // 避免链接编辑表单的 checkbox 对字符串 "false" 产生歧义
+      delete annotations[PAUSED_ANNO]
+    }
     latest.metadata.annotations = annotations
     await axiosInstance.put(`/apis/core.halo.run/v1alpha1/links/${link.metadata.name}`, latest)
     Toast.success(pausing ? '已暂停该订阅（数据保留）' : '已恢复该订阅')
@@ -252,46 +309,48 @@ async function togglePause() {
   }
 }
 
-function removeMoment(moment: FriendMoment) {
-  Dialog.warning({
-    title: '删除动态',
-    description: '确认删除这条友链动态吗？下次同步如果源里仍存在该条目会重新抓取。',
-    confirmType: 'danger',
-    onConfirm: async () => {
-      await axiosInstance.delete(
-        `/apis/fireside.timxs.com/v1alpha1/friendmoments/${moment.metadata.name}`,
-      )
-      Toast.success('已删除')
-      await reload()
-    },
-  })
+async function toggleHidden(moment: FriendMoment) {
+  const name = moment.metadata.name
+  if (togglingNames.value.has(name)) return
+  togglingNames.value.add(name)
+  try {
+    const { data: latest } = await axiosInstance.get<FriendMoment>(
+      `/apis/fireside.timxs.com/v1alpha1/friendmoments/${name}`,
+    )
+    const hiding = !latest.spec.hidden
+    latest.spec.hidden = hiding
+    await axiosInstance.put(
+      `/apis/fireside.timxs.com/v1alpha1/friendmoments/${name}`,
+      latest,
+    )
+    Toast.success(hiding ? '已隐藏，该条不再对外展示且不会被重新抓取' : '已恢复展示')
+    await fetchMoments()
+  } catch (e) {
+    Toast.error(errorMessage(e, '操作失败'))
+  } finally {
+    togglingNames.value.delete(name)
+  }
 }
 
 function clearMoments() {
   const scope = selectedLink.value ? `「${selectedTitle.value}」` : '全部友链'
   Dialog.warning({
     title: '清空友链动态',
-    description: `确认删除${scope}的所有已抓取动态吗？订阅本身不受影响，下次同步会重新抓取最新内容。`,
+    description: `确认删除${scope}的所有已抓取动态（含已隐藏）吗？订阅本身不受影响，下次同步会重新抓取最新内容。`,
     confirmType: 'danger',
     onConfirm: async () => {
       clearing.value = true
       try {
-        const params: Record<string, unknown> = { size: 1000 }
-        if (selectedLinkName.value) {
-          params.fieldSelector = `spec.linkName=${selectedLinkName.value}`
-        }
-        const { data } = await axiosInstance.get<ListResult<FriendMoment>>(
-          '/apis/fireside.timxs.com/v1alpha1/friendmoments',
-          { params },
+        // 后端批量清空并归零计数：避免前端逐条 DELETE 的请求风暴，
+        // 也保证清空后侧边栏计数立即准确
+        const { data } = await axiosInstance.post<ClearResponse>(
+          `/apis/console.api.fireside.timxs.com/v1alpha1/links/${selectedLinkName.value || '-'}/clear-moments`,
         )
-        for (const item of data.items) {
-          await axiosInstance.delete(
-            `/apis/fireside.timxs.com/v1alpha1/friendmoments/${item.metadata.name}`,
-          )
-        }
-        Toast.success(`已清空 ${data.items.length} 条动态`)
+        Toast.success(`已清空 ${data.deletedCount} 条动态`)
         page.value = 1
         await reload()
+      } catch (e) {
+        Toast.error(errorMessage(e, '清空失败'))
       } finally {
         clearing.value = false
       }
@@ -308,154 +367,234 @@ onMounted(reload)
 </script>
 
 <template>
-  <VPageHeader title="围炉">
+  <VPageHeader title="围炉订阅">
     <template #icon>
       <RiFireLine />
     </template>
     <template #actions>
       <VSpace>
-        <VButton
-          size="sm"
-          :disabled="!links.length || syncingLink || syncingAll"
-          :loading="syncingAll"
-          @click="sync('-', true)"
-        >
+        <VButton size="sm" @click="router.push({ path: '/links' })">
           <template #icon>
-            <RiRefreshLine />
+            <RiArrowLeftLine />
           </template>
-          同步全部
+          返回链接
         </VButton>
       </VSpace>
     </template>
   </VPageHeader>
 
-  <div class="fireside-page">
-    <div class="fireside-workspace">
-      <!-- 左侧：订阅列表 -->
-      <aside class="fireside-sidebar">
-        <div
-          class="fireside-source"
-          :class="{ 'is-active': !selectedLinkName }"
-          @click="selectLink('')"
-        >
-          <span class="fireside-source__name">全部动态</span>
-          <span class="fireside-source__count">{{ total }}</span>
+  <div class="fs-page">
+    <div class="fs-workspace">
+      <!-- 左侧：订阅侧边栏 -->
+      <aside class="fs-sidebar">
+        <div class="fs-sidebar__header">
+          <span class="fs-sidebar__title">订阅</span>
+          <span class="fs-sidebar__count">{{ links.length }}</span>
         </div>
-        <VLoading v-if="loadingLinks && !links.length" />
-        <template v-else>
-          <div
-            v-for="link in links"
-            :key="link.metadata.name"
-            class="fireside-source"
-            :class="{ 'is-active': selectedLinkName === link.metadata.name }"
-            @click="selectLink(link.metadata.name)"
+        <div class="fs-sidebar__body">
+          <button
+            type="button"
+            class="fs-source"
+            :class="{ 'is-active': !selectedLinkName }"
+            @click="selectLink('')"
           >
-            <span class="fireside-dot" :class="statusDotClass(link)"></span>
-            <img v-if="link.spec?.logo" class="fireside-source__logo" :src="link.spec.logo" alt="" />
-            <span class="fireside-source__name">
-              {{ displayNameOf(link) }}
-              <em v-if="isPaused(link)" class="fireside-source__paused">已暂停</em>
+            <span class="fs-source__icon">
+              <RiRssLine />
             </span>
-            <span class="fireside-source__count">{{ itemCountOf(link) }}</span>
-          </div>
-          <div v-if="!links.length" class="fireside-sidebar__empty">
-            还没有订阅：在「链接」中编辑友链，填写“动态 RSS 地址”即可
-          </div>
-        </template>
+            <span class="fs-source__name">全部动态</span>
+            <span class="fs-source__count">{{ totalItemCount }}</span>
+          </button>
+          <VLoading v-if="loadingLinks && !links.length" />
+          <template v-else>
+            <button
+              v-for="link in links"
+              :key="link.metadata.name"
+              type="button"
+              class="fs-source"
+              :class="{ 'is-active': selectedLinkName === link.metadata.name }"
+              @click="selectLink(link.metadata.name)"
+            >
+              <img
+                v-if="link.spec?.logo"
+                class="fs-source__logo"
+                :src="link.spec.logo"
+                alt=""
+                referrerpolicy="no-referrer"
+              />
+              <span v-else class="fs-source__icon">
+                <RiRssLine />
+              </span>
+              <span class="fs-source__name">
+                {{ displayNameOf(link) }}
+                <em v-if="isPaused(link)" class="fs-source__paused">暂停</em>
+              </span>
+              <span class="fs-dot" :class="statusDotClass(link)"></span>
+              <span class="fs-source__count">{{ itemCountOf(link) }}</span>
+            </button>
+            <div v-if="!links.length" class="fs-sidebar__empty">
+              还没有订阅。在「链接」中编辑友链，填写“动态 RSS 地址”即可订阅。
+            </div>
+          </template>
+        </div>
       </aside>
 
       <!-- 右侧：概览 + 工具栏 + 条目流 -->
-      <div class="fireside-main">
-        <div class="fireside-brief">
-          <div class="fireside-brief__copy">
-            <div class="fireside-brief__heading">
-              <strong>{{ selectedTitle }}</strong>
-              <span class="fireside-badge" :class="`is-${selectedStatusMeta.tone}`">
+      <div class="fs-main">
+        <div class="fs-brief">
+          <div class="fs-brief__copy">
+            <span class="fs-brief__eyebrow">围炉动态</span>
+            <div class="fs-brief__heading">
+              <strong class="fs-brief__title">{{ selectedTitle }}</strong>
+              <span
+                class="fs-badge"
+                :class="`is-${selectedStatusMeta.tone}`"
+                :title="selectedStatusMeta.description"
+              >
+                <span class="fs-badge__dot"></span>
                 {{ selectedStatusMeta.label }}
               </span>
             </div>
-            <span class="fireside-brief__meta">{{ selectedMeta }}</span>
-            <span v-if="selectedStatusMeta.description" class="fireside-brief__desc">
+            <span class="fs-brief__meta">{{ selectedMeta }}</span>
+            <span v-if="selectedLink && selectedStatus?.spec?.rssUrl" class="fs-brief__url">
+              {{ selectedStatus.spec.rssUrl }}
+            </span>
+            <span v-if="selectedStatusMeta.description" class="fs-brief__error">
               {{ selectedStatusMeta.description }}
             </span>
           </div>
-          <VSpace>
-            <VButton
-              v-if="selectedLink"
-              size="sm"
-              :loading="syncingLink"
-              :disabled="syncingAll || isPaused(selectedLink)"
-              @click="sync(selectedLinkName, false)"
-            >
-              <template #icon>
-                <RiRefreshLine />
-              </template>
-              同步当前
-            </VButton>
-            <VButton
-              v-if="selectedLink"
-              size="sm"
-              :loading="togglingPause"
-              @click="togglePause"
-            >
-              <template #icon>
-                <RiPlayCircleLine v-if="isPaused(selectedLink)" />
-                <RiPauseCircleLine v-else />
-              </template>
-              {{ isPaused(selectedLink) ? '恢复同步' : '暂停同步' }}
-            </VButton>
-            <VButton
-              size="sm"
-              type="danger"
-              ghost
-              :loading="clearing"
-              :disabled="!total"
-              @click="clearMoments"
-            >
-              <template #icon>
-                <RiDeleteBinLine />
-              </template>
-              清空{{ selectedLink ? '当前' : '全部' }}
-            </VButton>
-          </VSpace>
         </div>
 
-        <VLoading v-if="loadingList && !moments.length" />
+        <div class="fs-toolbar">
+          <div class="fs-tabs">
+            <button
+              type="button"
+              class="fs-tab"
+              :class="{ 'is-active': !showHidden }"
+              @click="selectTab(false)"
+            >
+              全部
+            </button>
+            <button
+              type="button"
+              class="fs-tab"
+              :class="{ 'is-active': showHidden }"
+              @click="selectTab(true)"
+            >
+              已隐藏
+            </button>
+          </div>
+          <div class="fs-toolbar__actions">
+            <VSpace>
+              <VButton
+                v-if="selectedLink"
+                v-permission="['plugin:fireside:manage']"
+                size="sm"
+                :loading="syncingLink"
+                :disabled="mutating || isPaused(selectedLink)"
+                @click="sync(selectedLinkName, false)"
+              >
+                <template #icon>
+                  <RiRefreshLine />
+                </template>
+                同步当前
+              </VButton>
+              <VButton
+                v-else
+                v-permission="['plugin:fireside:manage']"
+                size="sm"
+                :disabled="!links.length || mutating"
+                :loading="syncingAll"
+                @click="sync('-', true)"
+              >
+                <template #icon>
+                  <RiRefreshLine />
+                </template>
+                同步全部
+              </VButton>
+              <VButton
+                v-if="selectedLink"
+                v-permission="['plugin:fireside:manage']"
+                size="sm"
+                :loading="togglingPause"
+                @click="togglePause"
+              >
+                <template #icon>
+                  <RiPlayCircleLine v-if="isPaused(selectedLink)" />
+                  <RiPauseCircleLine v-else />
+                </template>
+                {{ isPaused(selectedLink) ? '恢复同步' : '暂停同步' }}
+              </VButton>
+              <VButton
+                v-permission="['plugin:fireside:manage']"
+                size="sm"
+                type="danger"
+                ghost
+                :loading="clearing"
+                :disabled="mutating"
+                @click="clearMoments"
+              >
+                <template #icon>
+                  <RiDeleteBinLine />
+                </template>
+                清空{{ selectedLink ? '当前' : '全部' }}
+              </VButton>
+              <VButton size="sm" ghost :loading="loadingList" @click="reload()">
+                <template #icon>
+                  <RiRefreshLine />
+                </template>
+                刷新列表
+              </VButton>
+            </VSpace>
+          </div>
+        </div>
+
+        <VLoading v-if="loadingList && !visibleMoments.length" />
         <VEmpty
-          v-else-if="!moments.length"
-          title="暂无友链动态"
-          message="填写友链的动态 RSS 地址后，等待定时同步或点击同步按钮"
+          v-else-if="!visibleMoments.length"
+          :title="showHidden ? '没有已隐藏的动态' : '暂无友链动态'"
+          :message="showHidden ? '在「全部」列表中隐藏的条目会出现在这里' : '填写友链的动态 RSS 地址后，等待定时同步或点击同步按钮'"
         >
-          <template #actions>
-            <VButton :loading="syncingAll" :disabled="!links.length" @click="sync('-', true)">
+          <template v-if="!showHidden" #actions>
+            <VButton
+              v-permission="['plugin:fireside:manage']"
+              type="secondary"
+              :loading="syncingAll"
+              :disabled="!links.length || mutating"
+              @click="sync('-', true)"
+            >
               立即同步
             </VButton>
           </template>
         </VEmpty>
-        <ul v-else class="fireside-list">
-          <li v-for="moment in moments" :key="moment.metadata.name" class="fireside-item">
-            <img
-              v-if="moment.spec.logo"
-              class="fireside-item__avatar"
-              :src="moment.spec.logo"
-              alt=""
-              referrerpolicy="no-referrer"
-            />
-            <div v-else class="fireside-item__avatar fireside-item__avatar--placeholder">
-              {{ (moment.spec.author || '?').slice(0, 1) }}
-            </div>
-            <div class="fireside-item__body">
-              <div class="fireside-item__head">
-                <span class="fireside-item__author">{{ moment.spec.author }}</span>
-                <span class="fireside-item__time">{{ formatDate(moment.spec.pubDate) }}</span>
+        <ul v-else class="fs-list">
+          <li v-for="moment in visibleMoments" :key="moment.metadata.name" class="fs-item">
+            <!-- 头像仅在「全部动态」混排时显示，选中单个友链后来源已明确、行更紧凑 -->
+            <template v-if="!selectedLinkName">
+              <img
+                v-if="moment.spec.logo"
+                class="fs-item__avatar"
+                :src="moment.spec.logo"
+                alt=""
+                referrerpolicy="no-referrer"
+              />
+              <div v-else class="fs-item__avatar fs-item__avatar--placeholder">
+                {{ (moment.spec.author || '?').slice(0, 1) }}
               </div>
-              <div v-if="moment.spec.title" class="fireside-item__title">
+            </template>
+            <div class="fs-item__body">
+              <div class="fs-item__head">
+                <span class="fs-item__author">{{ moment.spec.author }}</span>
+                <span class="fs-item__time">{{ formatDate(moment.spec.pubDate) }}</span>
+              </div>
+              <div v-if="moment.spec.title" class="fs-item__title">
                 {{ moment.spec.title }}
               </div>
-              <p class="fireside-item__text">{{ moment.spec.contentText }}</p>
-              <div v-if="moment.spec.images?.length" class="fireside-item__images">
+              <p v-if="moment.spec.contentText" class="fs-item__text">
+                {{ moment.spec.contentText }}
+              </p>
+              <div v-if="photosOf(moment).length" class="fs-item__images">
                 <img
-                  v-for="img in moment.spec.images.slice(0, 9)"
+                  v-for="img in photosOf(moment).slice(0, 9)"
                   :key="img"
                   :src="img"
                   alt=""
@@ -464,20 +603,35 @@ onMounted(reload)
                 />
               </div>
             </div>
-            <div class="fireside-item__actions">
-              <a :href="moment.spec.postLink" target="_blank" rel="noreferrer" title="查看原文">
+            <div class="fs-item__actions">
+              <a
+                class="fs-item__action"
+                :href="moment.spec.postLink"
+                target="_blank"
+                rel="noreferrer"
+                title="查看原文"
+              >
                 <RiExternalLinkLine />
               </a>
-              <button type="button" title="删除" @click="removeMoment(moment)">
-                <RiDeleteBinLine />
+              <button
+                v-permission="['plugin:fireside:manage']"
+                type="button"
+                class="fs-item__action"
+                :title="showHidden ? '恢复展示' : '隐藏（不再对外展示，也不会重新抓取）'"
+                @click="toggleHidden(moment)"
+              >
+                <RiEyeLine v-if="showHidden" />
+                <RiEyeOffLine v-else />
               </button>
             </div>
           </li>
         </ul>
 
-        <div v-if="total > PAGE_SIZE" class="fireside-pagination">
+        <div v-if="total > PAGE_SIZE" class="fs-pagination">
           <VButton size="sm" :disabled="page <= 1 || loadingList" @click="prevPage">上一页</VButton>
-          <span>第 {{ page }} / {{ totalPages }} 页，共 {{ total }} 条</span>
+          <span class="fs-pagination__info">
+            第 {{ page }} / {{ totalPages }} 页 · 共 {{ total }} 条
+          </span>
           <VButton size="sm" :disabled="page >= totalPages || loadingList" @click="nextPage">
             下一页
           </VButton>
@@ -488,68 +642,140 @@ onMounted(reload)
 </template>
 
 <style scoped>
-.fireside-page {
+.fs-page {
+  /* 对齐 Halo Console：卡片描边 #eaecf0、主色 #4CCBA0、内容区外边距 16px */
+  --fs-border: #eaecf0;
+  --fs-primary: #4ccba0;
+  --fs-text: #18181b;
+  --fs-text-secondary: #52525b;
+  --fs-text-muted: #71717a;
+  --fs-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
+  margin: 0;
   padding: 1rem;
 }
 
-.fireside-workspace {
+.fs-workspace {
   display: flex;
-  gap: 1rem;
-  align-items: flex-start;
+  min-width: 0;
   flex-direction: column;
+  gap: 1rem;
+  align-items: stretch;
 }
 
 @media (min-width: 1024px) {
-  .fireside-workspace {
+  .fs-workspace {
     flex-direction: row;
-  }
-
-  .fireside-sidebar {
-    width: 16rem;
-    flex: none;
+    align-items: flex-start;
   }
 }
 
-.fireside-sidebar {
+/* ── 侧边栏 ─────────────────────────────── */
+.fs-sidebar {
   width: 100%;
-  border: 1px solid #e5e7eb;
+  flex: none;
+  overflow: hidden;
+  border: 1px solid var(--fs-border);
   border-radius: 8px;
   background: #fff;
-  padding: 0.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
+  box-shadow: var(--fs-shadow);
 }
 
-.fireside-source {
+@media (min-width: 1024px) {
+  .fs-sidebar {
+    position: sticky;
+    top: 1rem;
+    width: 16rem;
+  }
+}
+
+.fs-sidebar__header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.625rem;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 0.875rem;
-  color: #18181b;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--fs-border);
+  background: #f9fafb;
+  padding: 0.625rem 0.875rem;
 }
 
-.fireside-source:hover {
-  background: #f4f4f5;
-}
-
-.fireside-source.is-active {
-  background: #eef2ff;
+.fs-sidebar__title {
+  color: var(--fs-text);
+  font-size: 0.8125rem;
   font-weight: 600;
 }
 
-.fireside-source__logo {
-  width: 1.25rem;
-  height: 1.25rem;
-  border-radius: 50%;
-  object-fit: cover;
-  flex: none;
+.fs-sidebar__count {
+  color: var(--fs-text-muted);
+  font-size: 0.75rem;
 }
 
-.fireside-source__name {
+.fs-sidebar__body {
+  display: flex;
+  flex-direction: column;
+  padding: 0.375rem;
+}
+
+.fs-source {
+  position: relative;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  padding: 0.5rem 0.625rem;
+  text-align: left;
+  font-size: 0.875rem;
+  color: var(--fs-text);
+  cursor: pointer;
+  transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.fs-source:hover {
+  background: #f9fafb;
+}
+
+/* 选中态对齐官方列表：gray-100 底 + 左侧主色指示条 */
+.fs-source.is-active {
+  background: #f3f4f6;
+  font-weight: 600;
+}
+
+.fs-source.is-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.375rem;
+  bottom: 0.375rem;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--fs-primary);
+}
+
+.fs-source__logo {
+  width: 1.375rem;
+  height: 1.375rem;
+  flex: none;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--fs-border);
+  background: #fff;
+}
+
+.fs-source__icon {
+  display: inline-flex;
+  width: 1.375rem;
+  height: 1.375rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #f3f4f6;
+  color: var(--fs-text-muted);
+  font-size: 0.75rem;
+}
+
+.fs-source__name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -557,243 +783,387 @@ onMounted(reload)
   white-space: nowrap;
 }
 
-.fireside-source__paused {
+.fs-source__paused {
+  margin-left: 0.25rem;
   font-style: normal;
   font-size: 0.6875rem;
-  color: #b45309;
-  margin-left: 0.25rem;
+  font-weight: 400;
+  color: #ea580c;
 }
 
-.fireside-source__count {
+.fs-source__count {
   flex: none;
+  min-width: 1.25rem;
+  text-align: right;
   font-size: 0.75rem;
-  color: #71717a;
+  font-weight: 400;
+  color: var(--fs-text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
-.fireside-sidebar__empty {
+.fs-sidebar__empty {
   padding: 0.75rem 0.625rem;
   font-size: 0.8125rem;
-  color: #71717a;
-  line-height: 1.4;
+  line-height: 1.5;
+  color: var(--fs-text-muted);
 }
 
-.fireside-dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
+/* ── 状态点（侧边栏） ─────────────────────── */
+.fs-dot {
+  width: 0.375rem;
+  height: 0.375rem;
   flex: none;
+  border-radius: 50%;
   background: #d4d4d8;
 }
 
-.fireside-dot.is-success {
+.fs-dot.is-success {
   background: #22c55e;
 }
 
-.fireside-dot.is-error {
+.fs-dot.is-error {
   background: #ef4444;
 }
 
-.fireside-dot.is-warning {
-  background: #f59e0b;
+.fs-dot.is-warning {
+  background: #f97316;
 }
 
-.fireside-dot.is-muted {
-  background: #d4d4d8;
-}
-
-.fireside-main {
+/* ── 主区 ─────────────────────────────── */
+.fs-main {
   flex: 1;
   min-width: 0;
   width: 100%;
 }
 
-.fireside-brief {
+/* 概览条：对齐链接订阅页 feed-brief 的双层纹理质感 */
+.fs-brief {
   display: flex;
+  min-width: 0;
   align-items: flex-end;
   justify-content: space-between;
   gap: 1rem;
-  flex-wrap: wrap;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--fs-border);
   border-radius: 8px;
-  background: #fff;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.92), rgb(250 250 250 / 0.88)),
+    repeating-linear-gradient(135deg, rgb(24 24 27 / 0.035) 0 1px, transparent 1px 12px);
   padding: 1rem;
-  margin-bottom: 0.75rem;
+  box-shadow: var(--fs-shadow);
 }
 
-.fireside-brief__copy {
+.fs-brief__copy {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 0.25rem;
-  min-width: 0;
 }
 
-.fireside-brief__heading {
+.fs-brief__eyebrow {
+  color: var(--fs-text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1rem;
+}
+
+.fs-brief__heading {
   display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
-  flex-wrap: wrap;
+}
+
+.fs-brief__title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fs-text);
   font-size: 1.125rem;
+  font-weight: 650;
+  line-height: 1.5rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.fireside-brief__meta {
+.fs-brief__meta {
+  color: var(--fs-text-muted);
   font-size: 0.8125rem;
-  color: #71717a;
+  line-height: 1.125rem;
 }
 
-.fireside-brief__desc {
-  font-size: 0.75rem;
+.fs-brief__url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: #a1a1aa;
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+}
+
+.fs-brief__error {
+  color: #b91c1c;
+  font-size: 0.75rem;
+  line-height: 1.125rem;
   word-break: break-all;
 }
 
-.fireside-badge {
-  font-size: 0.6875rem;
+/* ── 状态徽章：语义色按官方 Alert 约定（{c}-50 底 / {c}-300 边 / {c}-700 字） ── */
+.fs-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  border: 1px solid transparent;
   border-radius: 999px;
-  padding: 0.125rem 0.5rem;
+  padding: 0.125rem 0.5625rem;
+  font-size: 0.6875rem;
   font-weight: 500;
+  line-height: 1rem;
+  white-space: nowrap;
 }
 
-.fireside-badge.is-success {
-  background: #dcfce7;
+.fs-badge__dot {
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.fs-badge.is-success {
+  border-color: #86efac;
+  background: #f0fdf4;
   color: #15803d;
 }
 
-.fireside-badge.is-error {
-  background: #fee2e2;
+.fs-badge.is-error {
+  border-color: #fca5a5;
+  background: #fef2f2;
   color: #b91c1c;
 }
 
-.fireside-badge.is-warning {
-  background: #fef3c7;
-  color: #b45309;
+.fs-badge.is-warning {
+  border-color: #fdba74;
+  background: #fff7ed;
+  color: #c2410c;
 }
 
-.fireside-badge.is-muted {
-  background: #f4f4f5;
-  color: #71717a;
+.fs-badge.is-muted {
+  border-color: #e4e4e7;
+  background: #fafafa;
+  color: var(--fs-text-muted);
 }
 
-.fireside-list {
+/* ── 工具栏：sticky + 毛玻璃，对齐链接订阅页 feed-toolbar ── */
+.fs-toolbar {
+  position: sticky;
+  top: 0.75rem;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+  border: 1px solid var(--fs-border);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.9);
+  padding: 0.5rem 0.625rem;
+  box-shadow: var(--fs-shadow);
+  backdrop-filter: blur(14px);
+}
+
+/* Tabs：对齐链接订阅页 ReadStatusTabs 的分段形态 */
+.fs-tabs {
+  display: inline-flex;
+  flex: none;
+  gap: 0.25rem;
+  border: 1px solid var(--fs-border);
+  border-radius: 6px;
+  background: #f9fafb;
+  padding: 0.1875rem;
+}
+
+.fs-tab {
+  border: none;
+  border-radius: 4px;
+  background: none;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--fs-text-muted);
+  cursor: pointer;
+  transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.fs-tab:hover {
+  color: var(--fs-text);
+}
+
+.fs-tab.is-active {
+  background: #fff;
+  color: var(--fs-text);
+  font-weight: 600;
+  box-shadow: var(--fs-shadow);
+}
+
+.fs-toolbar__actions {
+  display: flex;
+  min-width: 0;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* ── 条目流 ─────────────────────────────── */
+.fs-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  border: 1px solid #e5e7eb;
+  overflow: hidden;
+  border: 1px solid var(--fs-border);
   border-radius: 8px;
   background: #fff;
-  overflow: hidden;
+  box-shadow: var(--fs-shadow);
 }
 
-.fireside-item {
+.fs-item {
+  position: relative;
   display: flex;
   gap: 0.75rem;
-  padding: 0.875rem 1rem;
   border-bottom: 1px solid #f4f4f5;
+  padding: 1rem;
+  transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.fireside-item:last-child {
+.fs-item:last-child {
   border-bottom: none;
 }
 
-.fireside-item__avatar {
-  width: 2.25rem;
-  height: 2.25rem;
-  border-radius: 50%;
-  object-fit: cover;
-  flex: none;
+.fs-item:hover {
+  background: #fafafa;
 }
 
-.fireside-item__avatar--placeholder {
+.fs-item__avatar {
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid var(--fs-border);
+  background: #fff;
+  object-fit: cover;
+}
+
+.fs-item__avatar--placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #eef2ff;
-  color: #4f46e5;
+  background: #f0fdf9;
+  color: #0d9488;
   font-weight: 600;
 }
 
-.fireside-item__body {
+.fs-item__body {
   flex: 1;
   min-width: 0;
 }
 
-.fireside-item__head {
+.fs-item__head {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
 }
 
-.fireside-item__author {
-  font-weight: 600;
+.fs-item__author {
   font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--fs-text);
 }
 
-.fireside-item__time {
+.fs-item__time {
   font-size: 0.75rem;
-  color: #a1a1aa;
+  color: var(--fs-text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
-.fireside-item__title {
+.fs-item__title {
   margin-top: 0.25rem;
   font-size: 0.875rem;
   font-weight: 500;
+  color: var(--fs-text);
 }
 
-.fireside-item__text {
+.fs-item__text {
   margin: 0.25rem 0 0;
-  font-size: 0.8125rem;
-  color: #52525b;
-  line-height: 1.5;
   display: -webkit-box;
+  overflow: hidden;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
-  overflow: hidden;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--fs-text-secondary);
 }
 
-.fireside-item__images {
+.fs-item__images {
   display: flex;
   flex-wrap: wrap;
   gap: 0.375rem;
-  margin-top: 0.5rem;
+  margin-top: 0.625rem;
 }
 
-.fireside-item__images img {
-  width: 4.5rem;
-  height: 4.5rem;
+.fs-item__images img {
+  width: 3.75rem;
+  height: 3.75rem;
   border-radius: 6px;
+  border: 1px solid var(--fs-border);
   object-fit: cover;
 }
 
-.fireside-item__actions {
+/* 行操作：hover 浮现，对齐官方列表的克制风格 */
+.fs-item__actions {
   display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
   flex: none;
+  flex-direction: column;
+  gap: 0.25rem;
+  opacity: 0;
+  transition: opacity 150ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.fireside-item__actions a,
-.fireside-item__actions button {
+.fs-item:hover .fs-item__actions,
+.fs-item:focus-within .fs-item__actions {
+  opacity: 1;
+}
+
+.fs-item__action {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
   border: none;
+  border-radius: 6px;
   background: none;
-  padding: 0.25rem;
-  border-radius: 4px;
+  padding: 0;
+  font-size: 0.875rem;
+  color: var(--fs-text-muted);
   cursor: pointer;
-  color: #71717a;
+  transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.fireside-item__actions a:hover,
-.fireside-item__actions button:hover {
+.fs-item__action:hover {
   background: #f4f4f5;
-  color: #18181b;
+  color: var(--fs-text);
 }
 
-.fireside-pagination {
+/* ── 分页 ─────────────────────────────── */
+.fs-pagination {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.75rem;
   margin-top: 0.75rem;
+}
+
+.fs-pagination__info {
   font-size: 0.8125rem;
-  color: #71717a;
+  color: var(--fs-text-muted);
+  font-variant-numeric: tabular-nums;
 }
 </style>

@@ -21,7 +21,8 @@
     "@halo-dev/components": "^2.25.1",
     "@halo-dev/ui-shared": "^2.25.1",
     "axios": "^1.13.5",
-    "vue": "^3.5.28"
+    "vue": "^3.5.28",
+    "vue-router": "^4.5.0"
   },
   "devDependencies": {
     "@rsbuild/core": "^1.7.3",

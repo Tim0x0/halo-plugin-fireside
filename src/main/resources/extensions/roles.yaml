@@ -1,6 +1,27 @@
 apiVersion: v1alpha1
 kind: Role
 metadata:
+  name: role-template-fireside-view
+  labels:
+    halo.run/role-template: "true"
+  annotations:
+    rbac.authorization.halo.run/module: "围炉"
+    rbac.authorization.halo.run/display-name: "围炉查看"
+    rbac.authorization.halo.run/ui-permissions: |
+      ["plugin:fireside:view"]
+rules:
+  # 管理页只读：条目流、同步状态徽章
+  - apiGroups: [ "fireside.timxs.com" ]
+    resources: [ "friendmoments", "feedstatuses" ]
+    verbs: [ "get", "list" ]
+  # 管理页读取友链列表（订阅侧边栏）
+  - apiGroups: [ "core.halo.run" ]
+    resources: [ "links" ]
+    verbs: [ "get", "list" ]
+---
+apiVersion: v1alpha1
+kind: Role
+metadata:
   name: role-template-fireside-manage
   labels:
     halo.run/role-template: "true"
@@ -9,19 +30,21 @@ metadata:
     rbac.authorization.halo.run/display-name: "围炉管理"
     rbac.authorization.halo.run/ui-permissions: |
       ["plugin:fireside:manage"]
+    rbac.authorization.halo.run/dependencies: |
+      ["role-template-fireside-view"]
 rules:
-  # 友链动态与同步状态的管理（管理页条目流/删除/状态徽章）
+  # 条目管理（隐藏/恢复/删除）
   - apiGroups: [ "fireside.timxs.com" ]
     resources: [ "friendmoments", "feedstatuses" ]
-    verbs: [ "get", "list", "create", "update", "patch", "delete", "deletecollection" ]
-  # 手动同步（子资源动作）
+    verbs: [ "create", "patch", "update", "delete", "deletecollection" ]
+  # 手动同步与清空（子资源动作）
   - apiGroups: [ "console.api.fireside.timxs.com" ]
-    resources: [ "links/sync" ]
+    resources: [ "links/sync", "links/clear-moments" ]
     verbs: [ "create" ]
-  # 管理页需要读取友链列表并切换暂停注解
+  # 切换暂停注解需要写 Link
   - apiGroups: [ "core.halo.run" ]
     resources: [ "links" ]
-    verbs: [ "get", "list", "update", "patch" ]
+    verbs: [ "update", "patch" ]
 ---
 apiVersion: v1alpha1
 kind: Role

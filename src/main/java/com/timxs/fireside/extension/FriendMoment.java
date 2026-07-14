@@ -55,10 +55,28 @@ public class FriendMoment extends AbstractExtension {
         @Schema(description = "纯文本摘要，约 500 字符")
         private String contentText;
 
-        @Schema(description = "正文中提取的图片地址列表（已绝对化）")
-        private List<String> images;
+        @Schema(description = "条目媒体列表（图片/视频/音频），对齐瞬间的 medium 模型；"
+            + "来自正文媒体标签与 RSS enclosure 附件")
+        private List<MediaItem> media;
+
+        @Schema(description = "是否隐藏：隐藏后不再对外输出（Finder/公开 API），"
+            + "但 postLink 仍保留用于去重，不会被重新抓取")
+        private Boolean hidden;
 
         @Schema(requiredMode = REQUIRED, description = "发布时间，排序键；缺失时回退抓取时刻")
         private Instant pubDate;
+    }
+
+    /**
+     * 媒体项，type 取值与瞬间的 MomentMediaType 对齐：PHOTO / VIDEO / AUDIO。
+     */
+    @Data
+    public static class MediaItem {
+
+        @Schema(description = "媒体类型：PHOTO / VIDEO / AUDIO")
+        private String type;
+
+        @Schema(description = "媒体地址（已绝对化）")
+        private String url;
     }
 }

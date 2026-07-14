@@ -37,15 +37,20 @@ public class RssSyncScheduler {
             && lastRunAt.plus(Duration.ofMinutes(config.effectiveIntervalMinutes())).isAfter(now)) {
             return;
         }
-        lastRunAt = now;
         try {
             // @Scheduled 单线程串行，方法体阻塞到本轮结束，天然不重叠；
             // 与手动同步之间由服务内部的锁互斥
             syncService.syncScheduled(config);
-        } catch (IllegalStateException e) {
+        } catch (SyncInProgressException e) {
+            // 手动同步持锁——不推进 lastRunAt，下个 tick 再试，
+            // 否则定时轮会被推迟整整一个 interval
             log.info("[围炉] 跳过本轮定时同步：{}", e.getMessage());
+            return;
         } catch (Exception e) {
+            // 失败详情已在服务内落各友链的 FeedStatus，本轮视为已消耗，
+            // 照常推进周期，避免每 5 分钟高频重试给友链站点造成压力
             log.error("[围炉] 本轮同步执行失败", e);
         }
+        lastRunAt = now;
     }
 }

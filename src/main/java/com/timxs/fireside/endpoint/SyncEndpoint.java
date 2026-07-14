@@ -2,6 +2,7 @@ package com.timxs.fireside.endpoint;
 
 import com.timxs.fireside.config.SyncConfig;
 import com.timxs.fireside.sync.RssSyncService;
+import com.timxs.fireside.sync.SyncInProgressException;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.webflux.core.fn.SpringdocRouteBuilder;
@@ -59,7 +60,7 @@ public class SyncEndpoint implements CustomEndpoint {
         return Mono.fromCallable(() -> doSync(name))
             // 同步内部是阻塞 IO（HTTP 抓取 + 阻塞 client），不能占用 NIO 线程
             .subscribeOn(Schedulers.boundedElastic())
-            .onErrorMap(IllegalStateException.class,
+            .onErrorMap(SyncInProgressException.class,
                 e -> new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage()))
             .flatMap(response -> ServerResponse.ok()
                 .contentType(MediaType.APPLICATION_JSON)

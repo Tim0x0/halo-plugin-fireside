@@ -11,7 +11,7 @@ spec:
           name: friendTag
           label: 友链动态标签
           value: 友链
-          help: 赋给每条友链动态的标签名（spec.tags）；主题可用 ?tag=该标签 在 /moments 仅筛出友链动态。留空则使用默认值「友链」
+          help: 赋给每条友链动态的标签名（无需带 # 号，展示时自动添加）；主题可用 ?tag=该标签 在 /moments 仅筛出友链动态。留空则使用默认值「友链」
     - group: sync
       label: 同步设置
       formSchema:
@@ -26,13 +26,14 @@ spec:
           value: 60
           min: 5
           validation: required|min:5
-          help: 每隔多久抓取一次友链 RSS
+          help: 每隔多久抓取一次友链 RSS。最小 5 分钟（避免高频抓取给友链站点造成压力），不设上限
         - $formkit: number
           name: maxLinksPerRun
           label: 每轮最多处理的友链数
           value: 20
           min: 1
           validation: required|min:1
+          help: 最小 1，不设上限；大于订阅总数时相当于每轮全量同步，超出的部分下轮轮换处理
         - $formkit: number
           name: retainPerLink
           label: 每个友链保留的最新条数
@@ -40,7 +41,7 @@ spec:
           min: 1
           max: 100
           validation: required|min:1|max:100
-          help: 超出后按发布时间删除最旧的条目
+          help: 超出后按发布时间删除最旧的条目。范围 1~100，上限为存储安全边界，不可调高
         - $formkit: number
           name: timeoutSeconds
           label: 抓取超时（秒）
@@ -48,3 +49,4 @@ spec:
           min: 1
           max: 60
           validation: required|min:1|max:60
+          help: 单个 RSS 请求的连接/读取超时。范围 1~60 秒，防止个别慢站点拖长整轮同步

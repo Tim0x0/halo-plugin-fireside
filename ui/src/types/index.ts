@@ -2,6 +2,7 @@ export interface Metadata {
   name: string
   annotations?: Record<string, string> | null
   creationTimestamp?: string | null
+  deletionTimestamp?: string | null
   version?: number | null
 }
 
@@ -42,8 +43,9 @@ export interface FriendMoment {
     postLink: string
     contentHtml?: string
     contentText?: string
-    images?: string[]
+    media?: { type: string; url: string }[]
     pubDate?: string
+    hidden?: boolean
   }
 }
 
@@ -59,6 +61,7 @@ export interface LinkSyncResult {
   displayName: string
   created: number
   trimmed: number
+  success: boolean
   error?: string | null
 }
 
@@ -68,6 +71,10 @@ export interface SyncResponse {
   failureCount: number
   createdCount: number
   results: LinkSyncResult[]
+}
+
+export interface ClearResponse {
+  deletedCount: number
 }
 
 export const RSS_URL_ANNO = 'fireside_rss_url'

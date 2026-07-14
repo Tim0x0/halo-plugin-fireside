@@ -13,7 +13,7 @@ metadata:
     "store.halo.run/recommended-apps": '["app-SnwWD"]'
 spec:
   enabled: true
-  requires: ">=2.22.0"
+  requires: ">=2.25.0"
   author:
     name: Tim0x0
     website: https://github.com/Tim0x0
@@ -31,5 +31,7 @@ spec:
   pluginDependencies:
     # 硬依赖：动态 RSS 地址元数据挂在链接插件的 Link 上
     "PluginLinks": ">=2.0.0"
-    # 可选依赖：未装瞬间插件时时间线只含友链条目，插件不崩
-    "PluginMoments?": "*"
+    # 可选依赖：未装瞬间插件时时间线只含友链条目，插件不崩。
+    # 1.16.0 起瞬间迁移到 Halo 2.22 的 typed 索引 API，本插件的查询按该形态编写，
+    # 旧版瞬间的 String 索引与 Boolean 查询值不匹配会导致查询失败，故要求 >=1.16.0
+    "PluginMoments?": ">=1.16.0"

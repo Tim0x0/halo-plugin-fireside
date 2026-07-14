@@ -12,9 +12,9 @@ export default definePlugin({
         name: 'Fireside',
         component: () => import(/* webpackChunkName: "fireside" */ './views/FiresideView.vue'),
         meta: {
-          title: '围炉',
+          title: '围炉订阅',
           searchable: true,
-          permissions: ['plugin:fireside:manage'],
+          permissions: ['plugin:fireside:view'],
           menu: {
             name: '围炉',
             group: 'content',

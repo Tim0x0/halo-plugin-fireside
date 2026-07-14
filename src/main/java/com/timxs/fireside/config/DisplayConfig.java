@@ -19,6 +19,10 @@ public class DisplayConfig {
     private String friendTag;
 
     public String effectiveFriendTag() {
-        return StringUtils.defaultIfBlank(StringUtils.trim(friendTag), DEFAULT_FRIEND_TAG);
+        // 井号由展示层统一添加；配置值带 # 会导致双井号，且 # 是 URL 锚点符会破坏
+        // ?tag= 筛选——无论填不填 # 都归一为纯标签名
+        String value = StringUtils.trim(StringUtils.stripStart(
+            StringUtils.trim(friendTag), "#"));
+        return StringUtils.defaultIfBlank(value, DEFAULT_FRIEND_TAG);
     }
 }
