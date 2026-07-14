@@ -13,7 +13,8 @@ import run.halo.app.extension.GVK;
 
 /**
  * 友链动态条目：定时抓取友链 RSS 后落库的单条动态。
- * 去重键为 spec.postLink；spec.linkName 关联来源 Link，用于级联清理与按友链过滤。
+ * 去重键为 spec.linkName + spec.postLink（限定友链内，防跨友链抢注）；
+ * spec.linkName 关联来源 Link，用于级联清理与按友链过滤。
  */
 @GVK(group = "fireside.timxs.com", version = "v1alpha1", kind = "FriendMoment",
     plural = "friendmoments", singular = "friendmoment")
