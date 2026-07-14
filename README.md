@@ -44,7 +44,74 @@ POST /apis/console.api.fireside.timxs.com/v1alpha1/links/{name}/clear-moments   
 GET /apis/api.fireside.timxs.com/v1alpha1/timeline?page=1&size=10&tag=
 ```
 
-返回与 `firesideFinder.timeline` 同源同过滤的 JSON 分页（`size` 上限 50），供主题前端 JS 实现无限滚动。
+返回与 `firesideFinder.timeline` 同源同过滤的 JSON 分页（`size` 上限 50），供主题前端 JS 实现无限滚动。响应结构（字段与 Finder 返回的 `FiresideMomentVo` 一致）：
+
+```jsonc
+{
+  "page": 1,
+  "size": 10,
+  "total": 42,
+  "hasNext": true,          // 是否还有下一页——无限滚动的终止判断
+  "items": [
+    {
+      "external": true,               // true=友链条目，false=自身瞬间
+      "sourceUrl": "https://…",       // 原文链接（自身瞬间为 /moments/{name}）
+      "authorUrl": "https://…",       // 友链作者站点（自身瞬间为 null）
+      "title": "条目标题或 null",
+      "owner": { "displayName": "作者", "avatar": "…", "name": "…" },
+      "spec": {
+        "releaseTime": "2026-07-14T03:00:00Z",
+        "tags": ["友链"],
+        "content": {
+          "html": "<p>已清洗的正文 HTML</p>",
+          "medium": [ { "type": "PHOTO", "url": "https://…" } ]
+        }
+      },
+      "stats": { "upvote": 0, "totalComment": 0 }
+    }
+  ]
+}
+```
+
+主题侧无限滚动的最小骨架（触底加载下一页）：
+
+```html
+<div id="fs-timeline"></div>
+<button id="fs-more">加载更多</button>
+<script>
+  let page = 1, loading = false;
+  const list = document.getElementById('fs-timeline');
+  const more = document.getElementById('fs-more');
+
+  async function loadMore() {
+    if (loading) return;
+    loading = true;
+    const res = await fetch(`/apis/api.fireside.timxs.com/v1alpha1/timeline?page=${page}&size=10`);
+    const data = await res.json();
+    for (const m of data.items) {
+      const item = document.createElement('article');
+      // content.html 已经过服务端白名单清洗，可直接插入
+      item.innerHTML = `
+        <header>
+          <img src="${m.owner.avatar || ''}" alt="" referrerpolicy="no-referrer">
+          <span>${m.owner.displayName}</span>
+          <time>${new Date(m.spec.releaseTime).toLocaleString()}</time>
+        </header>
+        <div class="content">${m.spec.content.html}</div>
+        ${m.external ? `<a href="${m.sourceUrl}" target="_blank" rel="noreferrer">查看原文</a>` : ''}`;
+      list.appendChild(item);
+    }
+    page += 1;
+    loading = false;
+    if (!data.hasNext) more.remove();   // 没有下一页时移除按钮（或解绑滚动监听）
+  }
+
+  more.addEventListener('click', loadMore);
+  loadMore();
+</script>
+```
+
+把按钮点击换成 `IntersectionObserver` 监听底部哨兵元素即可变成真正的触底自动加载；需要"只看朋友"时给请求加 `&tag=友链`（与插件设置中的友链动态标签一致）。
 
 ### 插件设置
 
