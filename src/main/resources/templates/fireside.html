@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- 聚合页大量引用友链站点图片，不发 Referer 以绕开对方防盗链 -->
+  <meta name="referrer" content="no-referrer">
+  <title th:text="${display.effectivePageTitle() + ' ' + display.effectiveTitleSeparator() + ' ' + site.title}">围炉</title>
+  <link rel="icon" type="image/x-icon" th:href="${site.favicon}">
+  <link rel="stylesheet"
+        th:href="@{/plugins/plugin-fireside/assets/static/fireside.css?v={version}(version=${pluginVersion})}">
+</head>
+<body>
+  <main class="fireside-container">
+    <!-- 封面区：仿微信朋友圈头部（封面图 + 右下角昵称与头像悬挂） -->
+    <header class="fireside-cover">
+      <img th:if="${!#strings.isEmpty(display.coverImage)}"
+           class="fireside-cover-img"
+           th:src="${display.coverImage}"
+           alt="封面图">
+      <div th:if="${#strings.isEmpty(display.coverImage)}"
+           class="fireside-cover-img fireside-cover-default"></div>
+      <!-- 返回站点首页 -->
+      <a class="fireside-home" th:href="@{/}" title="返回首页">
+        <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="m222.14 105.85l-80-80a20 20 0 0 0-28.28 0l-80 80A19.86 19.86 0 0 0 28 120v96a12 12 0 0 0 12 12h64a12 12 0 0 0 12-12v-52h24v52a12 12 0 0 0 12 12h64a12 12 0 0 0 12-12v-96a19.86 19.86 0 0 0-5.86-14.15M204 204h-40v-52a12 12 0 0 0-12-12h-48a12 12 0 0 0-12 12v52H52v-82.35l76-76l76 76Z"/></svg>
+      </a>
+      <div class="fireside-profile">
+        <span class="fireside-profile-name" th:text="${site.title}">站点名称</span>
+        <img th:if="${!#strings.isEmpty(site.logo)}"
+             class="fireside-profile-avatar"
+             th:src="${site.logo}"
+             th:alt="${site.title}">
+        <span th:if="${#strings.isEmpty(site.logo)}"
+              class="fireside-profile-avatar fireside-profile-avatar-fallback"
+              th:text="${#strings.substring(site.title, 0, 1)}">站</span>
+      </div>
+    </header>
+
+    <!-- 签名：右对齐显示在头像下方（仿朋友圈签名位，站点一句话描述） -->
+    <div class="fireside-signature"
+         th:if="${!#strings.isEmpty(display.signature)}"
+         th:text="${display.signature}">个性签名</div>
+
+    <!-- 标签筛选：全部 + 各标签（含友链标签，固定末位），单行横向滑动 -->
+    <nav class="fireside-tags">
+      <a class="fireside-tag"
+         th:classappend="${tag == ''} ? 'fireside-tag-active'"
+         th:href="@{/fireside}">全部</a>
+      <a class="fireside-tag"
+         th:each="t : ${tags}"
+         th:classappend="${tag == t.name} ? 'fireside-tag-active'"
+         th:href="@{/fireside(tag=${t.name})}">
+        <span th:text="${t.name}">标签</span><sup class="fireside-tag-count"
+              th:text="${t.momentCount}">0</sup>
+      </a>
+    </nav>
+
+    <!-- 时间线容器 -->
+    <div id="fs-timeline">
+      <th:block th:each="moment : ${moments.items}">
+        <article class="fireside-card"
+                 th:attr="data-external=${moment.external} ? '' : null">
+          <!-- 头部：头像 + 作者（无头像/加载失败时回退首字占位） -->
+          <div class="fireside-card-header">
+            <span class="fireside-avatar fireside-avatar-fallback"
+                  th:hidden="${!#strings.isEmpty(moment.owner.avatar)}"
+                  th:text="${#strings.isEmpty(moment.owner.displayName) ? '?' : #strings.substring(moment.owner.displayName, 0, 1)}">友</span>
+            <img th:if="${!#strings.isEmpty(moment.owner.avatar)}"
+                 class="fireside-avatar"
+                 th:src="${moment.owner.avatar}"
+                 th:alt="${moment.owner.displayName}"
+                 loading="lazy"
+                 onerror="this.hidden=true;this.previousElementSibling.hidden=false">
+            <div class="fireside-card-meta">
+              <div class="fireside-card-author">
+                <span th:if="!${moment.external}"
+                      class="fireside-author-name"
+                      th:text="${moment.owner.displayName}">作者</span>
+                <a th:if="${moment.external}"
+                   class="fireside-author-name fireside-author-link"
+                   th:href="${moment.authorUrl}"
+                   th:text="${moment.owner.displayName}"
+                   target="_blank"
+                   rel="noopener nofollow noreferrer">作者</a>
+                <span th:if="${moment.external}"
+                      class="fireside-badge"
+                      title="来自友链订阅">订阅</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 正文 -->
+          <div class="fireside-card-content"
+               th:if="${moment.spec.content.html != null and !moment.spec.content.html.isEmpty()}"
+               th:utext="${moment.spec.content.html}">正文内容</div>
+
+          <!-- 图片区：纯 img 不带跳转，点击行为交给外部灯箱插件接管 -->
+          <div class="fireside-media"
+               th:if="${!moment.spec.content.medium.isEmpty()}">
+            <th:block th:each="item : ${moment.spec.content.medium}">
+              <div class="fireside-media-item"
+                   th:classappend="${moment.spec.content.medium.size() > 1} ? 'fireside-media-grid' : 'fireside-media-single'">
+                <img th:src="${item.url}"
+                     th:alt="${moment.title ?: '图片'}"
+                     loading="lazy"
+                     referrerpolicy="no-referrer">
+              </div>
+            </th:block>
+          </div>
+
+          <!-- 底部：时间 + 标签 + 互动/原文链接（时间在底部，与朋友圈一致） -->
+          <div class="fireside-card-footer">
+            <!-- 自身瞬间的时间戳链去内置详情页；友链条目纯展示 -->
+            <a th:if="!${moment.external}"
+               class="fireside-card-time-link"
+               th:href="@{'/fireside/' + ${moment.metadata.name}}">
+              <time class="fireside-card-time"
+                    th:datetime="${moment.spec.releaseTime}"
+                    th:title="${#temporals.format(moment.spec.releaseTime, 'yyyy-MM-dd HH:mm')}"
+                    th:text="${#temporals.format(moment.spec.releaseTime, 'yyyy-MM-dd HH:mm')}">2026-01-01 00:00</time>
+            </a>
+            <time th:if="${moment.external}"
+                  class="fireside-card-time"
+                  th:datetime="${moment.spec.releaseTime}"
+                  th:title="${#temporals.format(moment.spec.releaseTime, 'yyyy-MM-dd HH:mm')}"
+                  th:text="${#temporals.format(moment.spec.releaseTime, 'yyyy-MM-dd HH:mm')}">2026-01-01 00:00</time>
+            <div class="fireside-card-tags"
+                 th:if="${moment.spec.tags != null and !moment.spec.tags.isEmpty()}">
+              <th:block th:each="tag : ${moment.spec.tags}">
+                <a class="fireside-card-tag"
+                   th:href="@{/fireside(tag=${tag})}"
+                   th:text="${tag}">标签</a>
+              </th:block>
+            </div>
+            <!-- 自身瞬间：点赞 + 评论 + 复制链接 -->
+            <div class="fireside-actions" th:if="!${moment.external}">
+              <button type="button" class="fireside-action fireside-like"
+                      th:attr="data-name=${moment.metadata.name}"
+                      title="点赞">
+                <svg class="fireside-icon fireside-icon-heart" viewBox="0 0 256 256" aria-hidden="true"><path d="M178 36c-20.09 0-37.92 7.93-50 21.56C115.92 43.93 98.09 36 78 36a66.08 66.08 0 0 0-66 66c0 72.34 105.81 130.14 110.31 132.57a12 12 0 0 0 11.38 0C138.19 232.14 244 174.34 244 102a66.08 66.08 0 0 0-66-66m-5.49 142.36a328.7 328.7 0 0 1-44.51 31.8a328.7 328.7 0 0 1-44.51-31.8C61.82 159.77 36 131.42 36 102a42 42 0 0 1 42-42c17.8 0 32.7 9.4 38.89 24.54a12 12 0 0 0 22.22 0C145.3 69.4 160.2 60 178 60a42 42 0 0 1 42 42c0 29.42-25.82 57.77-47.49 76.36"/></svg>
+                <svg class="fireside-icon fireside-icon-heart-fill" viewBox="0 0 256 256" aria-hidden="true"><path d="M240 102c0 70-103.79 126.66-108.21 129a8 8 0 0 1-7.58 0C119.79 228.66 16 172 16 102a62.07 62.07 0 0 1 62-62c20.65 0 38.73 8.88 50 23.89C139.27 48.88 157.35 40 178 40a62.07 62.07 0 0 1 62 62"/></svg>
+                <span class="fireside-like-count" th:text="${moment.stats.upvote}">0</span>
+              </button>
+              <button type="button" class="fireside-action fireside-comment-toggle"
+                      th:attr="data-name=${moment.metadata.name}"
+                      title="评论">
+                <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M128 20a108 108 0 0 0-96.15 157.23L21 209.66A20 20 0 0 0 46.34 235l32.43-10.81A108 108 0 1 0 128 20m0 192a84 84 0 0 1-42.06-11.27a12 12 0 0 0-6-1.62a12.1 12.1 0 0 0-3.8.62l-29.79 9.93l9.93-29.79a12 12 0 0 0-1-9.81A84 84 0 1 1 128 212"/></svg>
+                <span th:text="${moment.stats.approvedComment}">0</span>
+              </button>
+              <button type="button" class="fireside-action fireside-copy"
+                      th:attr="data-path='/fireside/' + ${moment.metadata.name}"
+                      title="复制链接">
+                <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M117.18 188.74a12 12 0 0 1 0 17l-5.12 5.12A58.26 58.26 0 0 1 70.6 228a58.62 58.62 0 0 1-41.46-100.08l34.75-34.75a58.64 58.64 0 0 1 98.56 28.11a12 12 0 1 1-23.37 5.44a34.65 34.65 0 0 0-58.22-16.58l-34.75 34.75A34.62 34.62 0 0 0 70.57 204a34.4 34.4 0 0 0 24.49-10.14l5.11-5.12a12 12 0 0 1 17.01 0M226.83 45.17a58.65 58.65 0 0 0-82.93 0l-5.11 5.11a12 12 0 0 0 17 17l5.12-5.12a34.63 34.63 0 1 1 49 49l-34.81 34.7A34.4 34.4 0 0 1 150.61 156a34.63 34.63 0 0 1-33.69-26.72a12 12 0 0 0-23.38 5.44A58.64 58.64 0 0 0 150.56 180h.05a58.28 58.28 0 0 0 41.47-17.17l34.75-34.75a58.62 58.62 0 0 0 0-82.91"/></svg>
+              </button>
+            </div>
+            <a th:if="${moment.external}"
+               class="fireside-source"
+               th:href="${moment.sourceUrl}"
+               target="_blank"
+               rel="noopener nofollow noreferrer">查看原文</a>
+          </div>
+
+          <!-- 自身瞬间的评论区：与官方主题（theme-earth 瞬间页）同款——
+               服务端 halo:comment 标签渲染，默认隐藏，点评论按钮切换显示 -->
+          <div class="fireside-comments" hidden
+               th:if="!${moment.external}"
+               th:attr="data-name=${moment.metadata.name}, id='fs-comment-' + ${moment.metadata.name}">
+            <halo:comment group="moment.halo.run" kind="Moment" th:attr="name=${moment.metadata.name}" />
+          </div>
+        </article>
+      </th:block>
+
+      <!-- 空态 -->
+      <div th:if="${moments.items.isEmpty()}" class="fireside-empty">
+        <p>暂时没有动态</p>
+      </div>
+    </div>
+
+    <!-- 分页：游标式"更早的动态"（每一页都是完整 SSR，评论走官方组件） -->
+    <nav class="fireside-pager"
+         th:if="${!#strings.isEmpty(olderUrl) or !#strings.isEmpty(latestUrl)}">
+      <a th:if="${!#strings.isEmpty(latestUrl)}"
+         th:href="${latestUrl}">回到最新</a>
+      <a th:if="${!#strings.isEmpty(olderUrl)}"
+         th:href="${olderUrl}">更早的动态</a>
+    </nav>
+
+    <!-- 页脚：版权行 -->
+    <footer class="fireside-footer">
+      <p>© <span th:text="${#temporals.format(#temporals.createNow(), 'yyyy')}">2026</span>
+        <span th:text="${site.title}">站点名称</span></p>
+    </footer>
+
+    <!-- 返回顶部 -->
+    <button type="button" id="fs-top" class="fireside-top" hidden title="返回顶部">
+      <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M216.49 168.49a12 12 0 0 1-17 0L128 97l-71.51 71.49a12 12 0 0 1-17-17l80-80a12 12 0 0 1 17 0l80 80a12 12 0 0 1 0 17"/></svg>
+    </button>
+
+    <!-- JS：点赞 / 评论显隐切换 -->
+    <script th:src="@{/plugins/plugin-fireside/assets/static/fireside.js?v={version}(version=${pluginVersion})}"></script>
+  </main>
+</body>
+</html>

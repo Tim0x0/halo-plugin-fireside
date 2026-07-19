@@ -13,6 +13,40 @@ public class DisplayConfig {
 
     public static final String DEFAULT_FRIEND_TAG = "友链";
 
+    public static final String DEFAULT_PAGE_TITLE = "围炉";
+
+    public static final int DEFAULT_PAGE_SIZE = 20;
+
+    /**
+     * 内置 /fireside 页面的标题。
+     */
+    private String pageTitle;
+
+    /**
+     * 详情页标题；空则跟随页面标题。
+     */
+    private String detailPageTitle;
+
+    /**
+     * 内置页每页展示的动态条数。
+     */
+    private Integer pageSize;
+
+    /**
+     * 浏览器标题分隔符（"页面标题 分隔符 站点名"），可选 - 或 |。
+     */
+    private String titleSeparator;
+
+    /**
+     * 内置页面顶部的朋友圈式封面图 URL；空则模板使用默认深色底。
+     */
+    private String coverImage;
+
+    /**
+     * 封面下方的签名（仿朋友圈签名位，通常填站点一句话描述）；空则不显示。
+     */
+    private String signature;
+
     /**
      * 赋给每条友链动态的标签名；主题可用 ?tag=该标签 仅筛出友链动态。
      */
@@ -24,5 +58,35 @@ public class DisplayConfig {
         String value = StringUtils.trim(StringUtils.stripStart(
             StringUtils.trim(friendTag), "#"));
         return StringUtils.defaultIfBlank(value, DEFAULT_FRIEND_TAG);
+    }
+
+    public String effectivePageTitle() {
+        return StringUtils.defaultIfBlank(
+            StringUtils.trim(pageTitle), DEFAULT_PAGE_TITLE);
+    }
+
+    /**
+     * 详情页标题：未配置时跟随页面标题。
+     */
+    public String effectiveDetailPageTitle() {
+        return StringUtils.defaultIfBlank(
+            StringUtils.trim(detailPageTitle), effectivePageTitle());
+    }
+
+    /**
+     * 每页条数：默认 20，钳制到 10~100（大值会放大首屏渲染与评论组件请求量）。
+     */
+    public int effectivePageSize() {
+        if (pageSize == null) {
+            return DEFAULT_PAGE_SIZE;
+        }
+        return Math.max(10, Math.min(100, pageSize));
+    }
+
+    /**
+     * 标题分隔符：仅接受 - 或 |，其余值（含未配置）回退 -。
+     */
+    public String effectiveTitleSeparator() {
+        return "|".equals(StringUtils.trim(titleSeparator)) ? "|" : "-";
     }
 }

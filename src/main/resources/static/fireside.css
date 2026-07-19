@@ -1,0 +1,640 @@
+/*
+ * 围炉 /fireside 页面样式 —— 仿微信朋友圈，自包含，不依赖主题变量。
+ * 所有类名以 fireside- 前缀避免冲突。
+ * 暗色通过 prefers-color-scheme 自动切换。
+ */
+
+/* ===== 布局 ===== */
+/* 内置页面独占整页，body 背景由本样式负责；
+   页面主体是居中的白色窄栏（移动端通栏），仿朋友圈观感 */
+body {
+  margin: 0;
+  background: #ededed;
+}
+.fireside-container {
+  max-width: 560px;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 0 0 32px;
+  /* 纵向 flex + 页脚 margin-top:auto：内容不足一屏时页脚贴底不留空洞 */
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #1a1a1a;
+}
+
+/* ===== 封面区（仿朋友圈头部） ===== */
+.fireside-cover {
+  position: relative;
+  /* 给右下角悬挂的头像留出下探空间 */
+  margin-bottom: 32px;
+}
+.fireside-cover-img {
+  display: block;
+  width: 100%;
+  height: 280px;
+  object-fit: cover;
+}
+/* 未配置封面图时的默认深色底 */
+.fireside-cover-default {
+  background: linear-gradient(135deg, #34435a 0%, #1d2735 60%, #141b26 100%);
+}
+/* 封面左上角返回首页（半透明圆底，悬浮在封面上） */
+.fireside-home {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.28);
+  color: #fff;
+  transition: background 0.15s;
+}
+.fireside-home:hover {
+  background: rgba(0, 0, 0, 0.45);
+}
+.fireside-home .fireside-icon {
+  width: 16px;
+  height: 16px;
+}
+.fireside-profile {
+  position: absolute;
+  right: 16px;
+  bottom: -24px;
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+}
+.fireside-profile-name {
+  margin-bottom: 34px;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 600;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+.fireside-profile-avatar {
+  width: 68px;
+  height: 68px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: #ddd;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+}
+/* 站点未配置 Logo 时的首字符占位头像 */
+.fireside-profile-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, #5a7dab, #3c5578);
+}
+
+/* ===== 个人签名（封面下方，右对齐，仿朋友圈） ===== */
+.fireside-signature {
+  margin-top: -4px;
+  padding: 0 16px 4px;
+  text-align: right;
+  color: #9b9b9b;
+  font-size: 13px;
+}
+
+/* ===== 标签筛选：单行横向滑动（主流话题栏形态） ===== */
+.fireside-tags {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  padding: 8px 16px 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  /* 隐藏滚动条：移动端触摸滑动，桌面端由 JS 把滚轮转为横向滚动 */
+  scrollbar-width: none;
+}
+.fireside-tags::-webkit-scrollbar {
+  display: none;
+}
+.fireside-tag {
+  flex-shrink: 0;
+  white-space: nowrap;
+  padding: 3px 12px;
+  border-radius: 14px;
+  font-size: 12px;
+  color: #7f7f7f;
+  text-decoration: none;
+  background: #f2f2f2;
+  transition: all 0.15s;
+}
+.fireside-tag:hover {
+  background: #e6e6e6;
+  color: #333;
+}
+.fireside-tag-active {
+  background: #07c160;
+  color: #fff;
+}
+.fireside-tag-active:hover {
+  background: #06ad56;
+  color: #fff;
+}
+.fireside-tag-count {
+  margin-left: 2px;
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* ===== 时间线条目（无卡片，细分隔线，仿朋友圈列表） ===== */
+.fireside-card {
+  padding: 16px 16px 14px;
+  border-bottom: 1px solid #ececec;
+}
+.fireside-card:last-child {
+  border-bottom: none;
+}
+
+/* ===== 条目头部：方形圆角头像 + 昵称 ===== */
+.fireside-card-header {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.fireside-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #f0f0f0;
+}
+/* 无头像时的首字占位（与封面头像占位同款观感） */
+.fireside-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, #5a7dab, #3c5578);
+}
+.fireside-avatar-fallback[hidden] {
+  display: none;
+}
+.fireside-card-meta {
+  flex: 1;
+  min-width: 0;
+  padding-top: 2px;
+}
+.fireside-card-author {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* 朋友圈昵称蓝 */
+.fireside-author-name {
+  font-weight: 600;
+  font-size: 15px;
+  color: #576b95;
+}
+.fireside-author-link {
+  color: #576b95;
+  text-decoration: none;
+}
+.fireside-author-link:hover {
+  opacity: 0.8;
+}
+.fireside-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #999;
+  background: #f5f5f5;
+  line-height: 1.4;
+}
+
+/* 正文、图片、底部沿昵称缩进（头像宽 42 + 间距 12） */
+.fireside-card-content,
+.fireside-media,
+.fireside-card-footer {
+  margin-left: 54px;
+}
+/* 微信同款：正文紧贴昵称下方开始，头像下半截挨着首行
+   （头部块被 42px 头像撑高，用负边距把首个内容块拉上来） */
+.fireside-card-header + .fireside-card-content,
+.fireside-card-header + .fireside-media,
+.fireside-card-header + .fireside-card-footer {
+  margin-top: -19px;
+}
+
+/* ===== 正文 ===== */
+.fireside-card-content {
+  margin-bottom: 8px;
+  color: #1a1a1a;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+.fireside-card-content p {
+  margin: 0 0 8px;
+}
+.fireside-card-content p:last-child {
+  margin-bottom: 0;
+}
+/* 正文内嵌标签由 fireside.js 清理（独立成段删除、混排保词去链）；
+   此规则仅作无 JS 环境的兜底隐藏 */
+.fireside-card-content a.tag {
+  display: none;
+}
+
+/* ===== 图片区（仿朋友圈小图网格） ===== */
+.fireside-media {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 8px;
+  /* 缩略图区不占满整行，与朋友圈一致 */
+  max-width: 340px;
+  grid-template-columns: repeat(3, 1fr);
+}
+.fireside-media-item {
+  display: block;
+  border-radius: 4px;
+  overflow: hidden;
+  text-decoration: none;
+  line-height: 0;
+}
+/* 单图：保持原比例，容器收缩到图片实际宽度（不露底色） */
+.fireside-media:not(:has(.fireside-media-item:nth-child(2))) {
+  display: block;
+  max-width: 240px;
+}
+.fireside-media-single {
+  width: fit-content;
+}
+.fireside-media-single img {
+  max-width: 100%;
+  max-height: 300px;
+  width: auto;
+  object-fit: cover;
+}
+/* 多图：正方形缩略图；加载占位色放在 img 上，加载完成即被图片覆盖 */
+.fireside-media-grid {
+  width: 100%;
+  aspect-ratio: 1;
+}
+.fireside-media-grid img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #f5f5f5;
+}
+/* 恰好 4 图：2×2 田字格，与朋友圈一致 */
+.fireside-media:has(.fireside-media-item:nth-child(4)):not(:has(.fireside-media-item:nth-child(5))) {
+  grid-template-columns: repeat(2, 1fr);
+  max-width: 227px;
+}
+
+/* ===== 条目底部：时间 + 标签 + 原文链接 ===== */
+.fireside-card-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+.fireside-card-time {
+  font-size: 12px;
+  color: #b2b2b2;
+}
+/* 自身瞬间时间戳链去详情页 */
+.fireside-card-time-link {
+  text-decoration: none;
+  line-height: 1;
+}
+.fireside-card-time-link:hover .fireside-card-time {
+  color: #576b95;
+}
+.fireside-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* 标签用链接蓝并加 # 前缀，与灰色时间明确区分 */
+.fireside-card-tag {
+  font-size: 12px;
+  color: #576b95;
+  text-decoration: none;
+}
+.fireside-card-tag::before {
+  content: '#';
+}
+.fireside-card-tag:hover {
+  opacity: 0.8;
+}
+.fireside-source {
+  margin-left: auto;
+  font-size: 12px;
+  color: #576b95;
+  text-decoration: none;
+}
+.fireside-source:hover {
+  opacity: 0.8;
+}
+
+/* ===== 互动：点赞 / 评论（仅自身瞬间） ===== */
+.fireside-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.fireside-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 12px;
+  color: #576b95;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.fireside-action:hover {
+  opacity: 0.75;
+}
+.fireside-icon {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+}
+/* 已点赞：空心/实心红心切换（微信红） */
+.fireside-like .fireside-icon-heart-fill {
+  display: none;
+}
+.fireside-like.fireside-liked {
+  color: #e64340;
+  cursor: default;
+}
+.fireside-like.fireside-liked .fireside-icon-heart {
+  display: none;
+}
+.fireside-like.fireside-liked .fireside-icon-heart-fill {
+  display: block;
+}
+
+/* 复制成功反馈：图标切换为文字提示 */
+.fireside-copy.fireside-copied .fireside-icon {
+  display: none;
+}
+.fireside-copy.fireside-copied::before {
+  content: '✓ 已复制';
+  color: #07c160;
+}
+
+/* ===== 页脚 ===== */
+.fireside-footer {
+  /* flex 容器内推到底部（sticky footer） */
+  margin-top: auto;
+  padding: 32px 16px 0;
+  text-align: center;
+  font-size: 12px;
+  color: #b2b2b2;
+}
+.fireside-footer p {
+  margin: 0 0 4px;
+}
+
+/* ===== 返回顶部（微信式白色圆钮） ===== */
+.fireside-top {
+  position: fixed;
+  right: 16px;
+  bottom: 40px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  color: #7f7f7f;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+/* display:flex 会压过浏览器对 [hidden] 的默认隐藏，需显式声明 */
+.fireside-top[hidden] {
+  display: none;
+}
+.fireside-top:hover {
+  color: #333;
+}
+.fireside-top .fireside-icon {
+  width: 18px;
+  height: 18px;
+}
+/* 桌面宽屏：按钮吸附在内容栏右侧外缘 */
+@media (min-width: 700px) {
+  .fireside-top {
+    right: calc(50% - 336px);
+  }
+}
+
+/* 评论区：随正文缩进；官方评论组件自带卡片样式，不再套底色 */
+.fireside-comments {
+  margin: 10px 0 0 54px;
+  font-size: 14px;
+}
+
+/* ===== 详情页 ===== */
+.fireside-detail-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 14px 16px 6px;
+}
+.fireside-back {
+  font-size: 14px;
+  color: #576b95;
+  text-decoration: none;
+}
+.fireside-back:hover {
+  opacity: 0.8;
+}
+/* 居中页面标题（微信详情页样式） */
+.fireside-detail-title {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+.fireside-detail-card {
+  border-bottom: none;
+}
+.fireside-detail-comments {
+  margin-top: 14px;
+}
+
+/* ===== 空态 ===== */
+.fireside-empty {
+  text-align: center;
+  padding: 48px 0;
+  color: #999;
+  font-size: 15px;
+}
+
+/* ===== 分页 ===== */
+.fireside-pager {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 16px;
+}
+.fireside-pager a {
+  padding: 8px 16px;
+  border-radius: 6px;
+  background: #f5f5f5;
+  color: #666;
+  text-decoration: none;
+}
+.fireside-pager a:hover {
+  background: #ececec;
+  color: #333;
+}
+
+/* ===== 暗色模式 ===== */
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #000;
+  }
+  .fireside-container {
+    background: #111;
+    color: #d5d5d5;
+  }
+  .fireside-cover-default {
+    background: linear-gradient(135deg, #232c3a 0%, #151b25 60%, #0d1118 100%);
+  }
+  .fireside-profile-avatar {
+    background: #2a2a2a;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  }
+  .fireside-signature {
+    color: #6e6e6e;
+  }
+  .fireside-tag {
+    color: #8a8a8a;
+    background: #1e1e1e;
+  }
+  .fireside-tag:hover {
+    background: #2a2a2a;
+    color: #ccc;
+  }
+  .fireside-tag-active {
+    background: #07c160;
+    color: #fff;
+  }
+  .fireside-tag-active:hover {
+    background: #06ad56;
+  }
+  .fireside-card {
+    border-bottom-color: #1f1f1f;
+  }
+  .fireside-avatar {
+    background: #1e1e1e;
+  }
+  .fireside-author-name,
+  .fireside-author-link {
+    color: #7d90a9;
+  }
+  .fireside-badge {
+    color: #777;
+    background: #1e1e1e;
+  }
+  .fireside-card-content {
+    color: #d5d5d5;
+  }
+  .fireside-media-grid img {
+    background: #1e1e1e;
+  }
+  .fireside-card-time {
+    color: #6e6e6e;
+  }
+  .fireside-card-tag {
+    color: #7d90a9;
+  }
+  .fireside-source {
+    color: #7d90a9;
+  }
+  .fireside-action {
+    color: #7d90a9;
+  }
+  .fireside-like.fireside-liked {
+    color: #e64340;
+  }
+  .fireside-back {
+    color: #7d90a9;
+  }
+  .fireside-detail-title {
+    color: #d5d5d5;
+  }
+  .fireside-top {
+    background: #2a2a2a;
+    color: #aaa;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  }
+  .fireside-top:hover {
+    color: #e0e0e0;
+  }
+  .fireside-footer {
+    color: #6e6e6e;
+  }
+  .fireside-card-time-link:hover .fireside-card-time {
+    color: #7d90a9;
+  }
+  .fireside-empty {
+    color: #666;
+  }
+  .fireside-pager a {
+    background: #1e1e1e;
+    color: #8a8a8a;
+  }
+  .fireside-pager a:hover {
+    background: #2a2a2a;
+    color: #d5d5d5;
+  }
+}
+
+/* ===== 移动端 ===== */
+@media (max-width: 640px) {
+  .fireside-container {
+    max-width: none;
+  }
+  .fireside-cover-img {
+    height: 230px;
+  }
+  .fireside-profile-avatar {
+    width: 60px;
+    height: 60px;
+  }
+  .fireside-profile-name {
+    margin-bottom: 30px;
+    font-size: 16px;
+  }
+  .fireside-card {
+    padding: 14px 12px 12px;
+  }
+  .fireside-media {
+    max-width: 300px;
+  }
+}

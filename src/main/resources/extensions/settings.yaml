@@ -8,10 +8,46 @@ spec:
       label: 展示设置
       formSchema:
         - $formkit: text
+          name: pageTitle
+          label: 页面标题
+          value: 围炉
+          help: 内置 /fireside 页面的标题，留空则使用默认值「围炉」
+        - $formkit: text
+          name: detailPageTitle
+          label: 详情页标题
+          help: 详情页顶栏与浏览器标题使用的名称，留空则跟随页面标题
+        - $formkit: number
+          name: pageSize
+          label: 每页条数
+          value: 20
+          min: 10
+          max: 100
+          validation: required|min:10|max:100
+          help: 内置 /fireside 页面每页展示的动态条数，范围 10~100。值越大首屏越长，自身瞬间的评论组件会逐条加载，过大将增加首屏请求量
+        - $formkit: radio
+          name: titleSeparator
+          label: 标题分隔符
+          value: '-'
+          options:
+            - label: '-'
+              value: '-'
+            - label: '|'
+              value: '|'
+          help: 浏览器标签页标题的分隔符，如「围炉 - 站点名」或「围炉 | 站点名」
+        - $formkit: attachment
+          name: coverImage
+          label: 封面图
+          help: 内置 /fireside 页面顶部的朋友圈式封面图，建议横图；留空则使用默认深色底
+        - $formkit: textarea
+          name: signature
+          label: 签名
+          rows: 2
+          help: 显示在封面下方、头像一侧（仿朋友圈签名位），可填站点的一句话描述，如「记录生活中的点滴瞬间」；留空则不显示
+        - $formkit: text
           name: friendTag
           label: 友链动态标签
           value: 友链
-          help: 赋给每条友链动态的标签名（无需带 # 号，展示时自动添加）；主题可用 ?tag=该标签 在 /moments 仅筛出友链动态。留空则使用默认值「友链」
+          help: 赋给每条友链动态的标签名（无需带 # 号，展示时自动添加）；主题可用 ?tag=该标签 仅筛出友链动态。留空则使用默认值「友链」
     - group: sync
       label: 同步设置
       formSchema:

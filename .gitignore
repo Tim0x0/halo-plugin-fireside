@@ -75,6 +75,10 @@ application-local.yml
 application-local.yaml
 application-local.properties
 
+# 本地静态预览页（/fireside 页面外观预览，不参与打包与提交）
+/fireside-preview.html
+/fireside-detail-preview.html
+
 /ui/build/
 /workplace/
 /src/main/resources/ui/

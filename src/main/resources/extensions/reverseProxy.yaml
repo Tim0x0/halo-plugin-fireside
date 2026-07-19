@@ -1,0 +1,11 @@
+apiVersion: plugin.halo.run/v1alpha1
+kind: ReverseProxy
+metadata:
+  name: plugin-fireside-static-proxy
+rules:
+  # 将插件 jar 内 resources/static/ 目录代理到
+  # /plugins/plugin-fireside/assets/static/**（内置 /fireside 页面的 CSS/JS）。
+  # Halo 不会自动暴露插件静态资源，必须显式声明本扩展。
+  - path: /static/**
+    file:
+      directory: static

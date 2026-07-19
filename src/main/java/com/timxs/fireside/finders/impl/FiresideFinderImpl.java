@@ -4,6 +4,7 @@ import static run.halo.app.extension.index.query.Queries.all;
 import static run.halo.app.extension.index.query.Queries.and;
 import static run.halo.app.extension.index.query.Queries.equal;
 import static run.halo.app.extension.index.query.Queries.isNull;
+import static run.halo.app.extension.index.query.Queries.lessThan;
 import static run.halo.app.extension.index.query.Queries.or;
 
 import com.timxs.fireside.FiresideConst;
@@ -13,9 +14,11 @@ import com.timxs.fireside.stub.Link;
 import com.timxs.fireside.stub.Moment;
 import com.timxs.fireside.vo.FiresideMomentVo;
 import com.timxs.fireside.vo.FiresideTagVo;
+import com.timxs.fireside.vo.FiresideTimelineSlice;
 import java.nio.charset.StandardCharsets;
 import java.security.Principal;
 import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -119,13 +122,165 @@ public class FiresideFinderImpl {
     }
 
     /**
+     * 游标式时间线（内置 /fireside 页分页用）：返回发布时间不晚于游标位置的
+     * 下一片 size 条。beforeCursor 为空/非法时视为第一页。
+     * 与页码窗口方案不同：任意翻页深度每次各源只查约 2*size 条，
+     * 不受单查询 1000 条上限约束。tag 语义与 timeline(page, size, tag) 一致。
+     */
+    public Mono<FiresideTimelineSlice> timelineSlice(String beforeCursor, Integer size,
+        String tag) {
+        int s = sizeNullSafe(size);
+        TimelineCursor cursor = TimelineCursor.parse(beforeCursor);
+        // 各源取 2*size+1：一页量出结果、一页量抵御游标边界的同毫秒并列剔除、
+        // +1 供 hasNext 判定；超过 2*size 条同毫秒并列属病态数据，不再兜底
+        int window = s * 2 + 1;
+        return displayConfig().flatMap(display -> {
+            String friendTag = display.effectiveFriendTag();
+            boolean friendOnly = StringUtils.isNotBlank(tag) && tag.equals(friendTag);
+            boolean selfOnly = StringUtils.isNotBlank(tag) && !friendOnly;
+            var selfMono = friendOnly
+                ? Mono.just(new ListResult<Moment>(1, window, 0L, List.of()))
+                : listSelfTop(window, selfOnly ? tag : null, cursor);
+            var friendMono = selfOnly
+                ? Mono.just(new ListResult<FriendMoment>(1, window, 0L, List.of()))
+                : client.listBy(FriendMoment.class, friendOptions(null, cursor),
+                    PageRequestImpl.of(1, window, FRIEND_SORT));
+            return Mono.zip(selfMono, friendMono).flatMap(tuple ->
+                assembleSlice(tuple.getT1(), tuple.getT2(), cursor, s, friendTag));
+        });
+    }
+
+    private Mono<FiresideTimelineSlice> assembleSlice(ListResult<Moment> self,
+        ListResult<FriendMoment> friends, TimelineCursor cursor, int size, String friendTag) {
+        // spec 为 null 的脏数据逐条跳过，同 assembleTimeline
+        List<TimelineItem> merged = mergeByTimeDesc(
+            self.getItems().stream().filter(m -> m.getSpec() != null).toList(),
+            friends.getItems().stream().filter(fm -> fm.getSpec() != null).toList());
+        List<TimelineItem> after = dropUntilAfterCursor(merged, cursor);
+        boolean hasNext = after.size() > size;
+        List<TimelineItem> pageItems = after.subList(0, Math.min(size, after.size()));
+        String nextCursor = hasNext && !pageItems.isEmpty()
+            ? cursorOf(pageItems.get(pageItems.size() - 1)) : null;
+        return toVos(pageItems, friendTag)
+            .map(vos -> FiresideTimelineSlice.builder()
+                .items(vos)
+                .hasNext(nextCursor != null)
+                .nextCursor(nextCursor)
+                .build());
+    }
+
+    /**
+     * 剔除游标位置及其之前的条目。优先按（来源, name）精确定位游标条目
+     * （查询用 <= 把同毫秒并列一并取回，因此边界不丢条目）；
+     * 游标条目已被删除/隐藏的罕见场景退化为按时间严格截断，
+     * 此时与游标同毫秒的未展示条目会被跳过，属可接受损失。
+     */
+    private List<TimelineItem> dropUntilAfterCursor(List<TimelineItem> merged,
+        TimelineCursor cursor) {
+        if (cursor == null) {
+            return merged;
+        }
+        for (int i = 0; i < merged.size(); i++) {
+            if (cursor.matches(merged.get(i))) {
+                return merged.subList(i + 1, merged.size());
+            }
+        }
+        for (int i = 0; i < merged.size(); i++) {
+            if (itemTime(merged.get(i)).isBefore(cursor.time())) {
+                return merged.subList(i, merged.size());
+            }
+        }
+        return List.of();
+    }
+
+    private static Instant itemTime(TimelineItem item) {
+        return item.self() != null ? selfTime(item.self()) : friendTime(item.friend());
+    }
+
+    private static String cursorOf(TimelineItem item) {
+        boolean external = item.friend() != null;
+        String name = external
+            ? item.friend().getMetadata().getName()
+            : item.self().getMetadata().getName();
+        return itemTime(item) + "|" + (external ? "f" : "s") + "|" + name;
+    }
+
+    /**
+     * 游标：上一页最后一条的（发布时间, 来源, name）。
+     * 编码为 "ISO时间|s或f|条目name"，URL 层负责转义。
+     */
+    private record TimelineCursor(Instant time, boolean external, String name) {
+
+        static TimelineCursor parse(String raw) {
+            if (StringUtils.isBlank(raw)) {
+                return null;
+            }
+            String[] parts = raw.split("\\|", 3);
+            if (parts.length != 3 || StringUtils.isBlank(parts[2])) {
+                return null;
+            }
+            try {
+                return new TimelineCursor(Instant.parse(parts[0]), "f".equals(parts[1]),
+                    parts[2]);
+            } catch (DateTimeParseException e) {
+                // 手改 URL 等非法游标当第一页处理，不报错
+                return null;
+            }
+        }
+
+        boolean matches(TimelineItem item) {
+            if (external != (item.friend() != null)) {
+                return false;
+            }
+            String itemName = external
+                ? item.friend().getMetadata().getName()
+                : item.self().getMetadata().getName();
+            return name.equals(itemName);
+        }
+    }
+
+    /**
+     * 单条自身瞬间（内置详情页 /fireside/{name} 用）：
+     * 可见性与 timeline 完全同口径（selfVisibilityQuery），
+     * 未命中、不可见或瞬间插件未装均返回空，由调用方转 404。
+     */
+    public Mono<FiresideMomentVo> get(String name) {
+        if (StringUtils.isBlank(name) || schemeManager.fetch(MOMENT_GVK).isEmpty()) {
+            return Mono.empty();
+        }
+        return selfVisibilityQuery()
+            .flatMap(query -> {
+                var options = ListOptions.builder()
+                    .fieldQuery(and(query, equal("metadata.name", name)))
+                    .build();
+                return client.listBy(Moment.class, options,
+                    PageRequestImpl.of(1, 1, SELF_SORT));
+            })
+            .flatMap(list -> list.getItems().isEmpty()
+                ? Mono.empty()
+                : selfVoSingle(list.getItems().get(0)));
+    }
+
+    /**
+     * 单条 Moment 转 VO：预载该条作者后走 selfVo，与时间线组装同一路径。
+     */
+    private Mono<FiresideMomentVo> selfVoSingle(Moment moment) {
+        if (moment.getSpec() == null) {
+            return Mono.empty();
+        }
+        String owner = moment.getSpec().getOwner();
+        Mono<Map<String, User>> users = StringUtils.isBlank(owner)
+            ? Mono.just(Map.of())
+            : userService.getUserOrGhost(owner).map(user -> Map.of(owner, user));
+        return users.flatMap(map -> selfVo(moment, map));
+    }
+
+    /**
      * 仅友链条目，不含自身瞬间；linkName 可选，用于按某个友链过滤。
      */
     public Mono<ListResult<FiresideMomentVo>> listFriends(Integer page, Integer size) {
         return listFriends(page, size, null);
-    }
-
-    public Mono<ListResult<FiresideMomentVo>> listFriends(Integer page, Integer size,
+    }    public Mono<ListResult<FiresideMomentVo>> listFriends(Integer page, Integer size,
         String linkName) {
         int p = pageNullSafe(page);
         int s = sizeNullSafe(size);
@@ -198,6 +353,11 @@ public class FiresideFinderImpl {
      * 自身瞬间：PluginMoments 未安装/未启用时 scheme 不存在，SELF 部分返回空（可选依赖不崩）。
      */
     private Mono<ListResult<Moment>> listSelfTop(int window, String tag) {
+        return listSelfTop(window, tag, null);
+    }
+
+    private Mono<ListResult<Moment>> listSelfTop(int window, String tag,
+        TimelineCursor cursor) {
         if (schemeManager.fetch(MOMENT_GVK).isEmpty()) {
             return Mono.just(new ListResult<>(1, window, 0L, List.of()));
         }
@@ -205,6 +365,11 @@ public class FiresideFinderImpl {
             .flatMap(query -> {
                 var effective = StringUtils.isNotBlank(tag)
                     ? and(query, equal("spec.tags", tag)) : query;
+                if (cursor != null) {
+                    // <= 取回同毫秒并列条目，游标剔除在归并后按 name 精确完成
+                    effective = and(effective,
+                        lessThan("spec.releaseTime", cursor.time(), true));
+                }
                 var options = ListOptions.builder().fieldQuery(effective).build();
                 return client.listBy(Moment.class, options,
                     PageRequestImpl.of(1, window, SELF_SORT));
@@ -264,6 +429,20 @@ public class FiresideFinderImpl {
         int lastReachablePage =
             (int) Math.max(1, Math.min(totalPages(total, size), capByWindow));
 
+        return toVos(pageItems, friendTag)
+            .map(vos -> new UrlContextListResult.Builder<FiresideMomentVo>()
+                .listResult(new ListResult<>(page, size, total, vos))
+                .prevUrl(pageUrl(Math.max(page - 1, 1), tag))
+                .nextUrl(pageUrl(Math.min(page + 1, lastReachablePage), tag))
+                .build());
+    }
+
+    /**
+     * 页内条目批量转 VO：作者与 Link 预载后逐条组装
+     * （assembleTimeline 与 assembleSlice 共用）。
+     */
+    private Mono<List<FiresideMomentVo>> toVos(List<TimelineItem> pageItems,
+        String friendTag) {
         List<FriendMoment> friendsOnPage = pageItems.stream()
             .map(TimelineItem::friend)
             .filter(Objects::nonNull)
@@ -274,12 +453,7 @@ public class FiresideFinderImpl {
                     ? selfVo(item.self(), preloaded.getT1())
                     : Mono.just(friendVo(item.friend(), friendTag,
                         preloaded.getT2().get(linkNameOf(item.friend())))))
-                .collectList())
-            .map(vos -> new UrlContextListResult.Builder<FiresideMomentVo>()
-                .listResult(new ListResult<>(page, size, total, vos))
-                .prevUrl(pageUrl(Math.max(page - 1, 1), tag))
-                .nextUrl(pageUrl(Math.min(page + 1, lastReachablePage), tag))
-                .build());
+                .collectList());
     }
 
     /**
@@ -467,7 +641,9 @@ public class FiresideFinderImpl {
         var doc = Jsoup.parse(contentHtml);
         var tagLink = doc.createElement("a")
             .attr("class", "tag")
-            .attr("href", MOMENTS_PATH + "?tag=" + UriUtils.encode(friendTag,
+            // 相对链接：在 /moments 或 /fireside 上点击都在当前页面筛选
+            // （瞬间编辑器写入正文的标签同为 ?tag= 相对形式）
+            .attr("href", "?tag=" + UriUtils.encode(friendTag,
                 StandardCharsets.UTF_8))
             .text(friendTag);
         var paragraph = doc.createElement("p");
@@ -490,7 +666,9 @@ public class FiresideFinderImpl {
         }
         return FiresideMomentVo.OwnerVo.builder()
             .name(user.getMetadata().getName())
-            .displayName(user.getSpec().getDisplayName())
+            // displayName 未填时回退用户名，避免展示空白（friendVo 对 linkName 同款兜底）
+            .displayName(StringUtils.defaultIfBlank(
+                user.getSpec().getDisplayName(), user.getMetadata().getName()))
             .avatar(user.getSpec().getAvatar())
             .bio(user.getSpec().getBio())
             .build();
@@ -513,6 +691,10 @@ public class FiresideFinderImpl {
     }
 
     private ListOptions friendOptions(String linkName) {
+        return friendOptions(linkName, null);
+    }
+
+    private ListOptions friendOptions(String linkName, TimelineCursor cursor) {
         // 隐藏条目不对外输出（timeline / listFriends / 公开 API 同走此查询）；
         // 同步创建条目时不写 hidden（为 null），索引函数已归一为 false，equal false 能全部命中
         var query = and(
@@ -521,6 +703,10 @@ public class FiresideFinderImpl {
         );
         if (StringUtils.isNotBlank(linkName)) {
             query = and(query, equal("spec.linkName", linkName));
+        }
+        if (cursor != null) {
+            // pubDate 由同步侧兜底（resolvePubDate），存量条目恒非 null
+            query = and(query, lessThan("spec.pubDate", cursor.time(), true));
         }
         return ListOptions.builder().fieldQuery(query).build();
     }
