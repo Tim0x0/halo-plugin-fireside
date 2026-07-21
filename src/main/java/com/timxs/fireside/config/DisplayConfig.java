@@ -52,6 +52,44 @@ public class DisplayConfig {
      */
     private String friendTag;
 
+    /**
+     * 是否在内置页封面显示「发瞬间」入口（仅对有发布权限的登录用户可见）。
+     */
+    private Boolean showComposeEntry;
+
+    /**
+     * 内置页默认配色方案：auto=跟随系统 / light / dark；
+     * 访客切换（若允许）保存在其浏览器本地并优先于此默认值。
+     */
+    private String colorScheme;
+
+    /**
+     * 是否在内置页右下角显示访客配色切换按钮。
+     */
+    private Boolean allowSchemeToggle;
+
+    /**
+     * 发瞬间入口：默认开启，仅显式关闭时隐藏。
+     */
+    public boolean effectiveShowComposeEntry() {
+        return !Boolean.FALSE.equals(showComposeEntry);
+    }
+
+    /**
+     * 配色方案：仅接受 light/dark，其余（含未配置）回退 auto。
+     */
+    public String effectiveColorScheme() {
+        String value = StringUtils.trim(colorScheme);
+        return "light".equals(value) || "dark".equals(value) ? value : "auto";
+    }
+
+    /**
+     * 访客配色切换按钮：默认显示。
+     */
+    public boolean effectiveAllowSchemeToggle() {
+        return !Boolean.FALSE.equals(allowSchemeToggle);
+    }
+
     public String effectiveFriendTag() {
         // 井号由展示层统一添加；配置值带 # 会导致双井号，且 # 是 URL 锚点符会破坏
         // ?tag= 筛选——无论填不填 # 都归一为纯标签名

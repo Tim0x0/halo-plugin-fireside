@@ -1,8 +1,22 @@
 /*
  * 围炉 /fireside 页面样式 —— 仿微信朋友圈，自包含，不依赖主题变量。
  * 所有类名以 fireside- 前缀避免冲突。
- * 暗色通过 prefers-color-scheme 自动切换。
+ * 配色三态：html[data-fs-scheme] 由模板 <head> 内联脚本在首帧前写入
+ * （访客选择 > 站长默认）；auto 档由 prefers-color-scheme 驱动。
  */
+
+/* color-scheme 让滚动条、表单控件等原生部件跟随配色 */
+html {
+  color-scheme: light;
+}
+html[data-fs-scheme="dark"] {
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-fs-scheme="light"]) {
+    color-scheme: dark;
+  }
+}
 
 /* ===== 布局 ===== */
 /* 内置页面独占整页，body 背景由本样式负责；
@@ -221,9 +235,10 @@ body {
   line-height: 1.4;
 }
 
-/* 正文、图片、底部沿昵称缩进（头像宽 42 + 间距 12） */
+/* 正文、图片、标签行、底部沿昵称缩进（头像宽 42 + 间距 12） */
 .fireside-card-content,
 .fireside-media,
+.fireside-card-tags,
 .fireside-card-footer {
   margin-left: 54px;
 }
@@ -231,6 +246,7 @@ body {
    （头部块被 42px 头像撑高，用负边距把首个内容块拉上来） */
 .fireside-card-header + .fireside-card-content,
 .fireside-card-header + .fireside-media,
+.fireside-card-header + .fireside-card-tags,
 .fireside-card-header + .fireside-card-footer {
   margin-top: -19px;
 }
@@ -248,10 +264,31 @@ body {
 .fireside-card-content p:last-child {
   margin-bottom: 0;
 }
+/* 正文富文本内嵌媒体：限制在内容区宽度内，防止源站原始尺寸溢出 */
+.fireside-card-content img,
+.fireside-card-content video {
+  max-width: 100%;
+  height: auto;
+}
+.fireside-card-content iframe {
+  max-width: 100%;
+}
 /* 正文内嵌标签由 fireside.js 清理（独立成段删除、混排保词去链）；
    此规则仅作无 JS 环境的兜底隐藏 */
 .fireside-card-content a.tag {
   display: none;
+}
+/* 混排标签清理后的行内 chip：无链接、不增删字符，
+   灰底圆角复用顶部标签栏的视觉语言；不用链接蓝，避免"可点"的错误暗示 */
+.fireside-inline-tag {
+  display: inline-block;
+  margin: 0 1px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #f2f2f2;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #7f7f7f;
 }
 
 /* ===== 图片区（仿朋友圈小图网格） ===== */
@@ -313,10 +350,21 @@ body {
   font-size: 12px;
   color: #b2b2b2;
 }
-/* 自身瞬间时间戳链去详情页 */
+/* 私密瞬间小锁（仿朋友圈时间旁）：与时间同色系，仅作者登录可见的场景 */
+.fireside-private-lock {
+  display: inline-flex;
+  align-items: center;
+  color: #b2b2b2;
+}
+.fireside-private-lock .fireside-icon {
+  width: 13px;
+  height: 13px;
+}
+/* 自身瞬间时间戳链去详情页；inline-flex 让链接盒紧贴内部 time，
+   避免链接按主题继承的更大字号撑出行框、把时间文字压得比标签低 */
 .fireside-card-time-link {
+  display: inline-flex;
   text-decoration: none;
-  line-height: 1;
 }
 .fireside-card-time-link:hover .fireside-card-time {
   color: #576b95;
@@ -412,39 +460,86 @@ body {
   margin: 0 0 4px;
 }
 
-/* ===== 返回顶部（微信式白色圆钮） ===== */
-.fireside-top {
+/* ===== 右下浮动列：白色胶囊分组（配色切换常驻在下、返回顶部滚动显隐在上） =====
+   容器底部锚定，回顶部显隐时配色钮位置不动；圆角与卡片语言一致 */
+.fireside-fabs {
   position: fixed;
   right: 16px;
   bottom: 40px;
   z-index: 10;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #ececec;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+}
+/* 组内两钮都不可见时整个胶囊隐藏（站长关切换且未滚动时） */
+.fireside-fabs:not(:has(.fireside-fab:not(.fireside-fab-collapsed))) {
+  display: none;
+}
+.fireside-fab {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 40px;
   height: 40px;
   border: none;
-  border-radius: 50%;
-  background: #fff;
+  background: none;
   color: #7f7f7f;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   cursor: pointer;
-  transition: color 0.15s;
+  transition: color 0.15s, background 0.15s;
 }
-/* display:flex 会压过浏览器对 [hidden] 的默认隐藏，需显式声明 */
-.fireside-top[hidden] {
-  display: none;
-}
-.fireside-top:hover {
+.fireside-fab:hover {
+  background: #f7f7f7;
   color: #333;
 }
-.fireside-top .fireside-icon {
-  width: 18px;
-  height: 18px;
+.fireside-fab .fireside-icon {
+  width: 17px;
+  height: 17px;
 }
-/* 桌面宽屏：按钮吸附在内容栏右侧外缘 */
+/* 组内分隔线；随上一枚折叠而淡出 */
+.fireside-fab + .fireside-fab {
+  border-top: 1px solid #f0f0f0;
+  transition: border-top-color 0.25s ease;
+}
+#fs-top.fireside-fab-collapsed + .fireside-fab {
+  border-top-color: transparent;
+}
+/* 回顶部：高度+透明度折叠缓动，替代 display 的瞬时显隐；
+   visibility 延迟到动画结束再隐藏，防止折叠中仍可聚焦/点击 */
+#fs-top {
+  overflow: hidden;
+  transition: height 0.25s ease, opacity 0.25s ease,
+    color 0.15s, background 0.15s;
+}
+#fs-top.fireside-fab-collapsed {
+  height: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: height 0.25s ease, opacity 0.25s ease,
+    color 0.15s, background 0.15s, visibility 0s 0.25s;
+}
+/* 配色三态图标：按 html[data-fs-scheme] 只显示对应一枚（默认自动） */
+.fireside-scheme-sun,
+.fireside-scheme-moon {
+  display: none;
+}
+html[data-fs-scheme="light"] .fireside-scheme-auto,
+html[data-fs-scheme="dark"] .fireside-scheme-auto {
+  display: none;
+}
+html[data-fs-scheme="light"] .fireside-scheme-sun {
+  display: block;
+}
+html[data-fs-scheme="dark"] .fireside-scheme-moon {
+  display: block;
+}
+/* 桌面宽屏：浮动列吸附在内容栏右侧外缘 */
 @media (min-width: 700px) {
-  .fireside-top {
+  .fireside-fabs {
     right: calc(50% - 336px);
   }
 }
@@ -513,106 +608,812 @@ body {
   color: #333;
 }
 
-/* ===== 暗色模式 ===== */
+/* ===== 发瞬间：封面入口 + 发布浮层 ===== */
+/* 封面右上角相机（与左上返回首页同款半透明圆钮），权限探测通过前保持 hidden */
+.fireside-compose-entry {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.28);
+  color: #fff;
+  cursor: pointer;
+}
+.fireside-compose-entry[hidden] {
+  display: none;
+}
+.fireside-compose-entry:hover {
+  background: rgba(0, 0, 0, 0.45);
+}
+.fireside-compose-entry .fireside-icon {
+  width: 17px;
+  height: 17px;
+}
+
+/* 浮层：半透明遮罩 + 居中卡片 */
+.fireside-compose {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+/* display:flex 会压过浏览器对 [hidden] 的默认隐藏，需显式声明 */
+.fireside-compose[hidden] {
+  display: none;
+}
+.fireside-compose-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+.fireside-compose-panel {
+  position: relative;
+  width: 100%;
+  max-width: 520px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  padding: 20px 24px;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+  box-sizing: border-box;
+}
+/* 桌面拖文件悬于卡片上方的提示层（移动端无文件拖拽，不会出现）；
+   pointer-events:none 保证不干扰下方的 dragenter/leave 计数 */
+.fireside-compose-panel.is-dropping::after {
+  content: '松开添加图片';
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  color: #576b95;
+  background: rgba(255, 255, 255, 0.88);
+  border: 2px dashed #576b95;
+  border-radius: 16px;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+/* 顶栏：桌面=对话框（标题居左 + 右上关闭）；移动端在媒体查询里切为微信发表页顶栏 */
+.fireside-compose-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.fireside-compose-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+/* 移动端专属元素：桌面默认隐藏，移动端媒体查询里恢复 */
+.fireside-mobile-only {
+  display: none;
+}
+.fireside-compose-cancel {
+  padding: 4px 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 15px;
+  color: #7f7f7f;
+  cursor: pointer;
+}
+.fireside-compose-cancel:hover {
+  color: #333;
+}
+.fireside-compose-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: #999;
+  cursor: pointer;
+}
+.fireside-compose-close:hover {
+  background: #f5f5f5;
+  color: #333;
+}
+.fireside-compose-close .fireside-icon {
+  width: 15px;
+  height: 15px;
+}
+/* 正文输入区：白底无框（微信发表页同款），分隔感交给下方设置行的细线 */
+.fireside-compose-text {
+  width: 100%;
+  min-height: 96px;
+  padding: 4px 0 10px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #1a1a1a;
+  resize: none;
+  box-sizing: border-box;
+}
+.fireside-compose-text:focus {
+  outline: none;
+}
+.fireside-compose-text::placeholder {
+  color: #b2b2b2;
+}
+/* 标签联想条：打 #xx 未完成时浮现，点选或 ↑↓+Enter 补全 */
+.fireside-compose-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+.fireside-compose-suggest[hidden] {
+  display: none;
+}
+.fireside-compose-suggest-item {
+  padding: 3px 10px;
+  border: 1px solid #dfe3ea;
+  border-radius: 999px;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+  color: #576b95;
+  cursor: pointer;
+}
+.fireside-compose-suggest-item:hover,
+.fireside-compose-suggest-item.is-active {
+  border-color: #576b95;
+  background: rgba(87, 107, 149, 0.08);
+}
+/* 图片九宫格：预览项由 JS 注入在添加按钮之前。
+   桌面对齐官方编辑器比例（小格左排不撑满），移动端媒体查询改回三等分 */
+.fireside-compose-media {
+  display: grid;
+  grid-template-columns: repeat(3, 104px);
+  justify-content: start;
+  gap: 8px;
+  margin-top: 12px;
+}
+.fireside-compose-item {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #f5f5f5;
+  cursor: grab;
+  /* 纵向滚动留给浏览器（手指从图上划过仍可滚页），长按拖起后由 JS 接管 */
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.fireside-compose-item img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* 配合长按拖拽排序：禁掉 iOS 长按呼出的图片菜单与桌面原生图片拖拽 */
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+}
+.fireside-compose-item.is-uploading img {
+  opacity: 0.45;
+}
+.fireside-compose-item.is-uploading::after {
+  content: '上传中…';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #666;
+}
+.fireside-compose-item.is-failed {
+  outline: 2px solid #e64340;
+  outline-offset: -2px;
+}
+.fireside-compose-item.is-failed::after {
+  content: '上传失败';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 2px 0;
+  text-align: center;
+  font-size: 11px;
+  color: #fff;
+  background: rgba(230, 67, 64, 0.85);
+}
+/* 拖拽排序（仿微信朋友圈）：原格子降透明度占位，浮影脱离文档流跟手；
+   浮影必须 pointer-events:none，命中检测才能穿透到其下方的真实格子 */
+.fireside-compose-item.is-dragging {
+  opacity: 0.35;
+}
+.fireside-compose-ghost {
+  position: fixed;
+  z-index: 110; /* 压过发表浮层本体（z-index: 100） */
+  overflow: hidden;
+  border-radius: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+  opacity: 0.92;
+}
+.fireside-compose-ghost img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+body.fireside-dragging {
+  cursor: grabbing;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.fireside-compose-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.fireside-compose-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1 / 1;
+  border: 1px dashed #d9d9d9;
+  border-radius: 6px;
+  background: #fafafa;
+  color: #b2b2b2;
+  cursor: pointer;
+}
+.fireside-compose-add[hidden] {
+  display: none;
+}
+/* 发表进行中被锁定的添加按钮/设置行 */
+.fireside-compose-add:disabled,
+.fireside-compose-setting:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.fireside-compose-add:hover {
+  border-color: #b2b2b2;
+  color: #7f7f7f;
+}
+.fireside-compose-add .fireside-icon {
+  width: 22px;
+  height: 22px;
+}
+/* 设置行（仿微信发表页列表行）：谁可以看 / 标签 */
+.fireside-compose-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 2px;
+  border: none;
+  border-top: 1px solid #f0f0f0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  /* 标签行是 div（content-box），不显式声明会比面板宽出 padding，
+     触发面板横向滚动条并盖掉底部圆角 */
+  box-sizing: border-box;
+}
+#fs-compose-visible {
+  margin-top: 14px;
+  cursor: pointer;
+}
+.fireside-compose-setting-label {
+  flex: none;
+  font-size: 14px;
+  color: #1a1a1a;
+}
+.fireside-compose-setting-value {
+  font-size: 14px;
+  color: #999;
+}
+/* 私密态：值高亮提醒 */
+.fireside-compose-setting.is-private .fireside-compose-setting-value {
+  color: #e6a23c;
+}
+/* 标签行：正文 #标签 的投影 chips，× 联动删除；空态给用法提示 */
+.fireside-compose-tags {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.fireside-compose-tags-empty {
+  font-size: 14px;
+  color: #c0c0c0;
+}
+.fireside-compose-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 10px;
+  border-radius: 999px;
+  background: rgba(87, 107, 149, 0.08);
+  font-size: 13px;
+  color: #576b95;
+}
+.fireside-compose-tag-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: #8a97b5;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.fireside-compose-tag-remove:hover {
+  background: rgba(87, 107, 149, 0.15);
+  color: #576b95;
+}
+/* 提示行：默认红色错误，加 is-ok 转绿色成功 */
+.fireside-compose-tip {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: #e64340;
+}
+.fireside-compose-tip.is-ok {
+  color: #07c160;
+}
+.fireside-compose-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+}
+.fireside-compose-uc {
+  font-size: 12px;
+  color: #b2b2b2;
+  text-decoration: none;
+}
+.fireside-compose-uc:hover {
+  color: #576b95;
+}
+/* 发表按钮（顶栏右侧）：微信绿 */
+.fireside-compose-submit {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 6px;
+  background: #07c160;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.fireside-compose-submit:hover {
+  background: #06ad56;
+}
+.fireside-compose-submit:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ===== 暗色模式 =====
+   两个入口共享同一套规则，修改时须同步：
+   ① 自动档：系统为深色且未被强制为浅色（media + :not(light)）
+   ② 强制深色档：html[data-fs-scheme="dark"] */
 @media (prefers-color-scheme: dark) {
-  body {
+  html:not([data-fs-scheme="light"]) body {
     background: #000;
   }
-  .fireside-container {
+  html:not([data-fs-scheme="light"]) .fireside-container {
     background: #111;
     color: #d5d5d5;
   }
-  .fireside-cover-default {
+  html:not([data-fs-scheme="light"]) .fireside-cover-default {
     background: linear-gradient(135deg, #232c3a 0%, #151b25 60%, #0d1118 100%);
   }
-  .fireside-profile-avatar {
+  html:not([data-fs-scheme="light"]) .fireside-profile-avatar {
     background: #2a2a2a;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
   }
-  .fireside-signature {
+  html:not([data-fs-scheme="light"]) .fireside-signature {
     color: #6e6e6e;
   }
-  .fireside-tag {
+  html:not([data-fs-scheme="light"]) .fireside-tag {
     color: #8a8a8a;
     background: #1e1e1e;
   }
-  .fireside-tag:hover {
+  html:not([data-fs-scheme="light"]) .fireside-tag:hover {
     background: #2a2a2a;
     color: #ccc;
   }
-  .fireside-tag-active {
+  html:not([data-fs-scheme="light"]) .fireside-tag-active {
     background: #07c160;
     color: #fff;
   }
-  .fireside-tag-active:hover {
+  html:not([data-fs-scheme="light"]) .fireside-tag-active:hover {
     background: #06ad56;
   }
-  .fireside-card {
+  html:not([data-fs-scheme="light"]) .fireside-card {
     border-bottom-color: #1f1f1f;
   }
-  .fireside-avatar {
+  html:not([data-fs-scheme="light"]) .fireside-avatar {
     background: #1e1e1e;
   }
-  .fireside-author-name,
-  .fireside-author-link {
+  html:not([data-fs-scheme="light"]) .fireside-author-name,
+  html:not([data-fs-scheme="light"]) .fireside-author-link {
     color: #7d90a9;
   }
-  .fireside-badge {
+  html:not([data-fs-scheme="light"]) .fireside-badge {
     color: #777;
     background: #1e1e1e;
   }
-  .fireside-card-content {
+  html:not([data-fs-scheme="light"]) .fireside-card-content {
     color: #d5d5d5;
   }
-  .fireside-media-grid img {
-    background: #1e1e1e;
-  }
-  .fireside-card-time {
-    color: #6e6e6e;
-  }
-  .fireside-card-tag {
-    color: #7d90a9;
-  }
-  .fireside-source {
-    color: #7d90a9;
-  }
-  .fireside-action {
-    color: #7d90a9;
-  }
-  .fireside-like.fireside-liked {
-    color: #e64340;
-  }
-  .fireside-back {
-    color: #7d90a9;
-  }
-  .fireside-detail-title {
-    color: #d5d5d5;
-  }
-  .fireside-top {
-    background: #2a2a2a;
-    color: #aaa;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-  }
-  .fireside-top:hover {
-    color: #e0e0e0;
-  }
-  .fireside-footer {
-    color: #6e6e6e;
-  }
-  .fireside-card-time-link:hover .fireside-card-time {
-    color: #7d90a9;
-  }
-  .fireside-empty {
-    color: #666;
-  }
-  .fireside-pager a {
+  html:not([data-fs-scheme="light"]) .fireside-inline-tag {
     background: #1e1e1e;
     color: #8a8a8a;
   }
-  .fireside-pager a:hover {
+  html:not([data-fs-scheme="light"]) .fireside-media-grid img {
+    background: #1e1e1e;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-card-time {
+    color: #6e6e6e;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-private-lock {
+    color: #6e6e6e;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-card-tag {
+    color: #7d90a9;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-source {
+    color: #7d90a9;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-action {
+    color: #7d90a9;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-like.fireside-liked {
+    color: #e64340;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-back {
+    color: #7d90a9;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-detail-title {
+    color: #d5d5d5;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-fabs {
+    border-color: #2a2a2a;
+    background: #1e1e1e;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  }
+  html:not([data-fs-scheme="light"]) .fireside-fab {
+    color: #8a8a8a;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-fab:hover {
+    background: #2a2a2a;
+    color: #e0e0e0;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-fab + .fireside-fab {
+    border-top-color: #2a2a2a;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-footer {
+    color: #6e6e6e;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-card-time-link:hover .fireside-card-time {
+    color: #7d90a9;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-empty {
+    color: #666;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-pager a {
+    background: #1e1e1e;
+    color: #8a8a8a;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-pager a:hover {
     background: #2a2a2a;
     color: #d5d5d5;
   }
+  html:not([data-fs-scheme="light"]) .fireside-compose-panel {
+    background: #1c1c1c;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-panel.is-dropping::after {
+    background: rgba(28, 28, 28, 0.88);
+    color: #7d90ba;
+    border-color: #7d90ba;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-title {
+    color: #d5d5d5;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-cancel {
+    color: #8a8a8a;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-cancel:hover {
+    color: #ccc;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-close:hover {
+    background: #2a2a2a;
+    color: #ccc;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-text {
+    color: #d5d5d5;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-text::placeholder {
+    color: #555;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-suggest-item {
+    border-color: #3a3a3a;
+    background: #1c1c1c;
+    color: #7d90a9;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-suggest-item:hover,
+  html:not([data-fs-scheme="light"]) .fireside-compose-suggest-item.is-active {
+    border-color: #7d90a9;
+    background: rgba(125, 144, 169, 0.12);
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-setting {
+    border-top-color: #2a2a2a;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-setting-label {
+    color: #d5d5d5;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-setting-value {
+    color: #8a8a8a;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-tags-empty {
+    color: #555;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-tag-chip {
+    background: rgba(125, 144, 169, 0.12);
+    color: #7d90a9;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-tag-remove {
+    color: #7d90a9;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-tag-remove:hover {
+    background: rgba(125, 144, 169, 0.2);
+    color: #a9b8cf;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-item {
+    background: #1e1e1e;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-item.is-uploading::after {
+    color: #aaa;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-add {
+    border-color: #3a3a3a;
+    background: #1e1e1e;
+    color: #6e6e6e;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-add:hover {
+    border-color: #555;
+    color: #999;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-private {
+    color: #8a8a8a;
+  }
+}
+/* ② 强制深色档（与上方自动档规则一一对应，修改须同步） */
+html[data-fs-scheme="dark"] body {
+  background: #000;
+}
+html[data-fs-scheme="dark"] .fireside-container {
+  background: #111;
+  color: #d5d5d5;
+}
+html[data-fs-scheme="dark"] .fireside-cover-default {
+  background: linear-gradient(135deg, #232c3a 0%, #151b25 60%, #0d1118 100%);
+}
+html[data-fs-scheme="dark"] .fireside-profile-avatar {
+  background: #2a2a2a;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+html[data-fs-scheme="dark"] .fireside-signature {
+  color: #6e6e6e;
+}
+html[data-fs-scheme="dark"] .fireside-tag {
+  color: #8a8a8a;
+  background: #1e1e1e;
+}
+html[data-fs-scheme="dark"] .fireside-tag:hover {
+  background: #2a2a2a;
+  color: #ccc;
+}
+html[data-fs-scheme="dark"] .fireside-tag-active {
+  background: #07c160;
+  color: #fff;
+}
+html[data-fs-scheme="dark"] .fireside-tag-active:hover {
+  background: #06ad56;
+}
+html[data-fs-scheme="dark"] .fireside-card {
+  border-bottom-color: #1f1f1f;
+}
+html[data-fs-scheme="dark"] .fireside-avatar {
+  background: #1e1e1e;
+}
+html[data-fs-scheme="dark"] .fireside-author-name,
+html[data-fs-scheme="dark"] .fireside-author-link {
+  color: #7d90a9;
+}
+html[data-fs-scheme="dark"] .fireside-badge {
+  color: #777;
+  background: #1e1e1e;
+}
+html[data-fs-scheme="dark"] .fireside-card-content {
+  color: #d5d5d5;
+}
+html[data-fs-scheme="dark"] .fireside-inline-tag {
+  background: #1e1e1e;
+  color: #8a8a8a;
+}
+html[data-fs-scheme="dark"] .fireside-media-grid img {
+  background: #1e1e1e;
+}
+html[data-fs-scheme="dark"] .fireside-card-time {
+  color: #6e6e6e;
+}
+html[data-fs-scheme="dark"] .fireside-private-lock {
+  color: #6e6e6e;
+}
+html[data-fs-scheme="dark"] .fireside-card-tag {
+  color: #7d90a9;
+}
+html[data-fs-scheme="dark"] .fireside-source {
+  color: #7d90a9;
+}
+html[data-fs-scheme="dark"] .fireside-action {
+  color: #7d90a9;
+}
+html[data-fs-scheme="dark"] .fireside-like.fireside-liked {
+  color: #e64340;
+}
+html[data-fs-scheme="dark"] .fireside-back {
+  color: #7d90a9;
+}
+html[data-fs-scheme="dark"] .fireside-detail-title {
+  color: #d5d5d5;
+}
+html[data-fs-scheme="dark"] .fireside-fabs {
+  border-color: #2a2a2a;
+  background: #1e1e1e;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+html[data-fs-scheme="dark"] .fireside-fab {
+  color: #8a8a8a;
+}
+html[data-fs-scheme="dark"] .fireside-fab:hover {
+  background: #2a2a2a;
+  color: #e0e0e0;
+}
+html[data-fs-scheme="dark"] .fireside-fab + .fireside-fab {
+  border-top-color: #2a2a2a;
+}
+html[data-fs-scheme="dark"] .fireside-footer {
+  color: #6e6e6e;
+}
+html[data-fs-scheme="dark"] .fireside-card-time-link:hover .fireside-card-time {
+  color: #7d90a9;
+}
+html[data-fs-scheme="dark"] .fireside-empty {
+  color: #666;
+}
+html[data-fs-scheme="dark"] .fireside-pager a {
+  background: #1e1e1e;
+  color: #8a8a8a;
+}
+html[data-fs-scheme="dark"] .fireside-pager a:hover {
+  background: #2a2a2a;
+  color: #d5d5d5;
+}
+html[data-fs-scheme="dark"] .fireside-compose-panel {
+  background: #1c1c1c;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+html[data-fs-scheme="dark"] .fireside-compose-panel.is-dropping::after {
+  background: rgba(28, 28, 28, 0.88);
+  color: #7d90ba;
+  border-color: #7d90ba;
+}
+html[data-fs-scheme="dark"] .fireside-compose-title {
+  color: #d5d5d5;
+}
+html[data-fs-scheme="dark"] .fireside-compose-cancel {
+  color: #8a8a8a;
+}
+html[data-fs-scheme="dark"] .fireside-compose-cancel:hover {
+  color: #ccc;
+}
+html[data-fs-scheme="dark"] .fireside-compose-close:hover {
+  background: #2a2a2a;
+  color: #ccc;
+}
+html[data-fs-scheme="dark"] .fireside-compose-text {
+  color: #d5d5d5;
+}
+html[data-fs-scheme="dark"] .fireside-compose-text::placeholder {
+  color: #555;
+}
+html[data-fs-scheme="dark"] .fireside-compose-suggest-item {
+  border-color: #3a3a3a;
+  background: #1c1c1c;
+  color: #7d90a9;
+}
+html[data-fs-scheme="dark"] .fireside-compose-suggest-item:hover,
+html[data-fs-scheme="dark"] .fireside-compose-suggest-item.is-active {
+  border-color: #7d90a9;
+  background: rgba(125, 144, 169, 0.12);
+}
+html[data-fs-scheme="dark"] .fireside-compose-setting {
+  border-top-color: #2a2a2a;
+}
+html[data-fs-scheme="dark"] .fireside-compose-setting-label {
+  color: #d5d5d5;
+}
+html[data-fs-scheme="dark"] .fireside-compose-setting-value {
+  color: #8a8a8a;
+}
+html[data-fs-scheme="dark"] .fireside-compose-tags-empty {
+  color: #555;
+}
+html[data-fs-scheme="dark"] .fireside-compose-tag-chip {
+  background: rgba(125, 144, 169, 0.12);
+  color: #7d90a9;
+}
+html[data-fs-scheme="dark"] .fireside-compose-tag-remove {
+  color: #7d90a9;
+}
+html[data-fs-scheme="dark"] .fireside-compose-tag-remove:hover {
+  background: rgba(125, 144, 169, 0.2);
+  color: #a9b8cf;
+}
+html[data-fs-scheme="dark"] .fireside-compose-item {
+  background: #1e1e1e;
+}
+html[data-fs-scheme="dark"] .fireside-compose-item.is-uploading::after {
+  color: #aaa;
+}
+html[data-fs-scheme="dark"] .fireside-compose-add {
+  border-color: #3a3a3a;
+  background: #1e1e1e;
+  color: #6e6e6e;
+}
+html[data-fs-scheme="dark"] .fireside-compose-add:hover {
+  border-color: #555;
+  color: #999;
+}
+html[data-fs-scheme="dark"] .fireside-compose-private {
+  color: #8a8a8a;
 }
 
 /* ===== 移动端 ===== */
@@ -636,5 +1437,46 @@ body {
   }
   .fireside-media {
     max-width: 300px;
+  }
+  /* 发布浮层全屏化（仿微信发表页）：顶栏吸顶、正文放大 */
+  .fireside-compose {
+    align-items: stretch;
+    padding: 0;
+  }
+  .fireside-compose-panel {
+    max-width: none;
+    height: 100vh;
+    height: 100dvh;
+    max-height: none;
+    border-radius: 0;
+    padding: 0 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  .fireside-compose-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    margin: 0 -16px 12px;
+    padding: 12px 16px;
+    /* 吸顶时用面板底色遮住滚过的内容，暗色模式自动跟随 */
+    background: inherit;
+  }
+  /* 移动端切回微信发表页顶栏：标题居中、取消/发表现身、桌面 × 隐藏 */
+  .fireside-compose-title {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+  .fireside-mobile-only {
+    display: inline-flex;
+    align-items: center;
+  }
+  .fireside-desktop-only {
+    display: none;
+  }
+  .fireside-compose-media {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .fireside-compose-text {
+    min-height: 30vh;
   }
 }

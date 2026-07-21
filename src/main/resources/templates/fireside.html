@@ -1,10 +1,29 @@
 <!DOCTYPE html>
-<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <!-- 聚合页大量引用友链站点图片，不发 Referer 以绕开对方防盗链 -->
   <meta name="referrer" content="no-referrer">
+  <!-- 防闪烁：首帧前应用配色（访客本地选择 > 站长默认），CSS 据 data-fs-scheme 分档 -->
+  <script th:inline="javascript">
+    (function () {
+      var scheme = /*[[${display.effectiveColorScheme()}]]*/ 'auto';
+      var allowToggle = /*[[${display.effectiveAllowSchemeToggle()}]]*/ true;
+      if (allowToggle) {
+        try {
+          var saved = localStorage.getItem('fireside.scheme');
+          if (saved === 'auto' || saved === 'light' || saved === 'dark') {
+            scheme = saved;
+          }
+        } catch (e) { /* 隐私模式下 localStorage 不可用，忽略 */ }
+      }
+      document.documentElement.setAttribute('data-fs-scheme', scheme);
+      // 同步官方评论组件的配色契约（其 var.css 按 data-color-scheme 切换 --halo-cw-* 变量）
+      document.documentElement.setAttribute('data-color-scheme', scheme);
+    })();
+  </script>
   <title th:text="${display.effectivePageTitle() + ' ' + display.effectiveTitleSeparator() + ' ' + site.title}">围炉</title>
   <link rel="icon" type="image/x-icon" th:href="${site.favicon}">
   <link rel="stylesheet"
@@ -24,6 +43,14 @@
       <a class="fireside-home" th:href="@{/}" title="返回首页">
         <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="m222.14 105.85l-80-80a20 20 0 0 0-28.28 0l-80 80A19.86 19.86 0 0 0 28 120v96a12 12 0 0 0 12 12h64a12 12 0 0 0 12-12v-52h24v52a12 12 0 0 0 12 12h64a12 12 0 0 0 12-12v-96a19.86 19.86 0 0 0-5.86-14.15M204 204h-40v-52a12 12 0 0 0-12-12h-48a12 12 0 0 0-12 12v52H52v-82.35l76-76l76 76Z"/></svg>
       </a>
+      <!-- 发瞬间入口（仿朋友圈封面右上角相机）。三层显隐：
+           设置开关(SSR) → 已登录(SSR，匿名访客无此节点) → 有 UC 发布权限(JS 探测后显示) -->
+      <button type="button" id="fs-compose-entry" class="fireside-compose-entry" hidden
+              th:if="${display.effectiveShowComposeEntry()}"
+              sec:authorize="isAuthenticated()"
+              title="发瞬间">
+        <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M208 56h-27.72l-13.63-20.44A12 12 0 0 0 156.67 30h-57.34a12 12 0 0 0-9.98 5.34L75.72 56H48a28 28 0 0 0-28 28v108a28 28 0 0 0 28 28h160a28 28 0 0 0 28-28V84a28 28 0 0 0-28-28m4 136a4 4 0 0 1-4 4H48a4 4 0 0 1-4-4V84a4 4 0 0 1 4-4h34.14a12 12 0 0 0 9.98-5.34L105.75 54h44.5l13.63 20.44a12 12 0 0 0 9.98 5.56H208a4 4 0 0 1 4 4Zm-84-96a48 48 0 1 0 48 48a48.05 48.05 0 0 0-48-48m0 72a24 24 0 1 1 24-24a24 24 0 0 1-24 24"/></svg>
+      </button>
       <div class="fireside-profile">
         <span class="fireside-profile-name" th:text="${site.title}">站点名称</span>
         <img th:if="${!#strings.isEmpty(site.logo)}"
@@ -108,7 +135,17 @@
             </th:block>
           </div>
 
-          <!-- 底部：时间 + 标签 + 互动/原文链接（时间在底部，与朋友圈一致） -->
+          <!-- 标签行：独立于时间行，多标签自由折行互不影响对齐 -->
+          <div class="fireside-card-tags"
+               th:if="${moment.spec.tags != null and !moment.spec.tags.isEmpty()}">
+            <th:block th:each="tag : ${moment.spec.tags}">
+              <a class="fireside-card-tag"
+                 th:href="@{/fireside(tag=${tag})}"
+                 th:text="${tag}">标签</a>
+            </th:block>
+          </div>
+
+          <!-- 底部：时间 + 互动/原文链接（时间在底部，与朋友圈一致） -->
           <div class="fireside-card-footer">
             <!-- 自身瞬间的时间戳链去内置详情页；友链条目纯展示 -->
             <a th:if="!${moment.external}"
@@ -119,19 +156,16 @@
                     th:title="${#temporals.format(moment.spec.releaseTime, 'yyyy-MM-dd HH:mm')}"
                     th:text="${#temporals.format(moment.spec.releaseTime, 'yyyy-MM-dd HH:mm')}">2026-01-01 00:00</time>
             </a>
+            <!-- 私密瞬间小锁（仿朋友圈时间旁）：私密内容仅作者登录可见，锁只会出现在作者眼前 -->
+            <span th:if="${!moment.external and moment.spec.visible != null and moment.spec.visible.name() == 'PRIVATE'}"
+                  class="fireside-private-lock" title="仅自己可见">
+              <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M208,76H180V56A52,52,0,0,0,76,56V76H48A20,20,0,0,0,28,96V208a20,20,0,0,0,20,20H208a20,20,0,0,0,20-20V96A20,20,0,0,0,208,76ZM100,56a28,28,0,0,1,56,0V76H100ZM204,204H52V100H204Z"/></svg>
+            </span>
             <time th:if="${moment.external}"
                   class="fireside-card-time"
                   th:datetime="${moment.spec.releaseTime}"
                   th:title="${#temporals.format(moment.spec.releaseTime, 'yyyy-MM-dd HH:mm')}"
                   th:text="${#temporals.format(moment.spec.releaseTime, 'yyyy-MM-dd HH:mm')}">2026-01-01 00:00</time>
-            <div class="fireside-card-tags"
-                 th:if="${moment.spec.tags != null and !moment.spec.tags.isEmpty()}">
-              <th:block th:each="tag : ${moment.spec.tags}">
-                <a class="fireside-card-tag"
-                   th:href="@{/fireside(tag=${tag})}"
-                   th:text="${tag}">标签</a>
-              </th:block>
-            </div>
             <!-- 自身瞬间：点赞 + 评论 + 复制链接 -->
             <div class="fireside-actions" th:if="!${moment.external}">
               <button type="button" class="fireside-action fireside-like"
@@ -191,10 +225,65 @@
         <span th:text="${site.title}">站点名称</span></p>
     </footer>
 
-    <!-- 返回顶部 -->
-    <button type="button" id="fs-top" class="fireside-top" hidden title="返回顶部">
-      <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M216.49 168.49a12 12 0 0 1-17 0L128 97l-71.51 71.49a12 12 0 0 1-17-17l80-80a12 12 0 0 1 17 0l80 80a12 12 0 0 1 0 17"/></svg>
-    </button>
+    <!-- 发瞬间浮层：与入口同门槛（设置开关 + 登录），匿名访客零 DOM。
+         发布走瞬间插件 UC API，服务端按角色决定是否需要审核 -->
+    <div id="fs-compose" class="fireside-compose" hidden
+         th:if="${display.effectiveShowComposeEntry()}"
+         sec:authorize="isAuthenticated()">
+      <div class="fireside-compose-mask" data-compose-close></div>
+      <div class="fireside-compose-panel" role="dialog" aria-modal="true" aria-label="发瞬间">
+        <!-- 顶栏：移动端仿微信发表页（取消|标题|发表），桌面端对话框（标题|×） -->
+        <div class="fireside-compose-head">
+          <button type="button" class="fireside-compose-cancel fireside-mobile-only" data-compose-close>取消</button>
+          <span class="fireside-compose-title">发瞬间</span>
+          <button type="button" class="fireside-compose-submit fireside-mobile-only">发表</button>
+          <button type="button" class="fireside-compose-close fireside-desktop-only" data-compose-close title="关闭">
+            <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M208.49 191.51a12 12 0 0 1-17 17L128 145l-63.51 63.49a12 12 0 0 1-17-17L111 128L47.51 64.49a12 12 0 0 1 17-17L128 111l63.51-63.52a12 12 0 0 1 17 17L145 128Z"/></svg>
+          </button>
+        </div>
+        <textarea id="fs-compose-text" class="fireside-compose-text" rows="4"
+                  maxlength="5000" placeholder="这一刻的想法…"></textarea>
+        <!-- 标签联想条：正文打 #xx 未完成时浮现（UC 标签接口），点选或 ↑↓+Enter 补全 -->
+        <div id="fs-compose-suggest" class="fireside-compose-suggest" hidden></div>
+        <!-- 图片九宫格：预览项由 JS 注入到添加按钮之前，走 Halo UC 附件上传 -->
+        <div id="fs-compose-media" class="fireside-compose-media">
+          <button type="button" id="fs-compose-add" class="fireside-compose-add" title="添加图片">
+            <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M228 128a12 12 0 0 1-12 12h-76v76a12 12 0 0 1-24 0v-76H40a12 12 0 0 1 0-24h76V40a12 12 0 0 1 24 0v76h76a12 12 0 0 1 12 12"/></svg>
+          </button>
+        </div>
+        <input type="file" id="fs-compose-file" accept="image/*" multiple hidden>
+        <!-- 设置行（仿微信发表页）：谁可以看 点击在 公开/私密 间切换；标签为可选输入 -->
+        <button type="button" id="fs-compose-visible" class="fireside-compose-setting"
+                title="私密瞬间仅自己登录后可见">
+          <span class="fireside-compose-setting-label">谁可以看</span>
+          <span class="fireside-compose-setting-value" id="fs-compose-visible-value">公开</span>
+        </button>
+        <!-- 标签行：正文 #标签 的实时投影（打完空格生效），× 联动删除正文里的对应文字 -->
+        <div class="fireside-compose-setting">
+          <span class="fireside-compose-setting-label">标签</span>
+          <span id="fs-compose-tags" class="fireside-compose-tags"></span>
+        </div>
+        <p id="fs-compose-tip" class="fireside-compose-tip" hidden></p>
+        <div class="fireside-compose-foot">
+          <a class="fireside-compose-uc" href="/uc/moments">在个人中心管理瞬间 →</a>
+          <button type="button" class="fireside-compose-submit fireside-desktop-only">发表</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右下浮动列：配色切换（常驻）+ 返回顶部（滚过一屏出现） -->
+    <div class="fireside-fabs">
+      <button type="button" id="fs-top" class="fireside-fab fireside-fab-collapsed" title="返回顶部">
+        <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M216.49 168.49a12 12 0 0 1-17 0L128 97l-71.51 71.49a12 12 0 0 1-17-17l80-80a12 12 0 0 1 17 0l80 80a12 12 0 0 1 0 17"/></svg>
+      </button>
+      <button type="button" id="fs-scheme" class="fireside-fab"
+              th:if="${display.effectiveAllowSchemeToggle()}"
+              title="配色：跟随系统">
+        <svg class="fireside-icon fireside-scheme-auto" viewBox="0 0 256 256" aria-hidden="true"><path d="M128,20A108,108,0,1,0,236,128,108.12,108.12,0,0,0,128,20Zm0,192a84,84,0,1,1,84-84A84.09,84.09,0,0,1,128,212ZM128,44a84,84,0,0,1,0,168Z"/></svg>
+        <svg class="fireside-icon fireside-scheme-sun" viewBox="0 0 256 256" aria-hidden="true"><path d="M116,36V20a12,12,0,0,1,24,0V36a12,12,0,0,1-24,0Zm80,92a68,68,0,1,1-68-68A68.07,68.07,0,0,1,196,128Zm-24,0a44,44,0,1,0-44,44A44.05,44.05,0,0,0,172,128ZM51.51,68.49a12,12,0,1,0,17-17l-12-12a12,12,0,0,0-17,17Zm0,119-12,12a12,12,0,0,0,17,17l12-12a12,12,0,1,0-17-17ZM196,72a12,12,0,0,0,8.49-3.51l12-12a12,12,0,0,0-17-17l-12,12A12,12,0,0,0,196,72Zm8.49,115.51a12,12,0,0,0-17,17l12,12a12,12,0,0,0,17-17ZM48,128a12,12,0,0,0-12-12H20a12,12,0,0,0,0,24H36A12,12,0,0,0,48,128Zm80,80a12,12,0,0,0-12,12v16a12,12,0,0,0,24,0V220A12,12,0,0,0,128,208Zm108-92H220a12,12,0,0,0,0,24h16a12,12,0,0,0,0-24Z"/></svg>
+        <svg class="fireside-icon fireside-scheme-moon" viewBox="0 0 256 256" aria-hidden="true"><path d="M236.37,139.4a12,12,0,0,0-12-3A84.07,84.07,0,0,1,119.6,31.59a12,12,0,0,0-15-15A108.86,108.86,0,0,0,49.69,55.07,108,108,0,0,0,136,228a107.09,107.09,0,0,0,64.93-21.69,108.86,108.86,0,0,0,38.44-54.94A12,12,0,0,0,236.37,139.4Zm-49.88,47.74A84,84,0,0,1,68.86,69.51,84.93,84.93,0,0,1,92.27,48.29Q92,52.13,92,56A108.12,108.12,0,0,0,200,164q3.87,0,7.71-.27A84.79,84.79,0,0,1,186.49,187.14Z"/></svg>
+      </button>
+    </div>
 
     <!-- JS：点赞 / 评论显隐切换 -->
     <script th:src="@{/plugins/plugin-fireside/assets/static/fireside.js?v={version}(version=${pluginVersion})}"></script>

@@ -5,6 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <!-- 聚合页可能引用友链站点图片，不发 Referer 以绕开对方防盗链 -->
   <meta name="referrer" content="no-referrer">
+  <!-- 防闪烁：首帧前应用配色（访客本地选择 > 站长默认），CSS 据 data-fs-scheme 分档 -->
+  <script th:inline="javascript">
+    (function () {
+      var scheme = /*[[${display.effectiveColorScheme()}]]*/ 'auto';
+      var allowToggle = /*[[${display.effectiveAllowSchemeToggle()}]]*/ true;
+      if (allowToggle) {
+        try {
+          var saved = localStorage.getItem('fireside.scheme');
+          if (saved === 'auto' || saved === 'light' || saved === 'dark') {
+            scheme = saved;
+          }
+        } catch (e) { /* 隐私模式下 localStorage 不可用，忽略 */ }
+      }
+      document.documentElement.setAttribute('data-fs-scheme', scheme);
+      // 同步官方评论组件的配色契约（其 var.css 按 data-color-scheme 切换 --halo-cw-* 变量）
+      document.documentElement.setAttribute('data-color-scheme', scheme);
+    })();
+  </script>
   <title th:text="${display.effectiveDetailPageTitle() + ' ' + display.effectiveTitleSeparator() + ' ' + site.title}">围炉 · 详情</title>
   <link rel="icon" type="image/x-icon" th:href="${site.favicon}">
   <link rel="stylesheet"
@@ -53,18 +71,25 @@
         </th:block>
       </div>
 
+      <!-- 标签行：独立于时间行，多标签自由折行互不影响对齐 -->
+      <div class="fireside-card-tags"
+           th:if="${moment.spec.tags != null and !moment.spec.tags.isEmpty()}">
+        <th:block th:each="tag : ${moment.spec.tags}">
+          <a class="fireside-card-tag"
+             th:href="@{/fireside(tag=${tag})}"
+             th:text="${tag}">标签</a>
+        </th:block>
+      </div>
+
       <div class="fireside-card-footer">
         <time class="fireside-card-time"
               th:datetime="${moment.spec.releaseTime}"
               th:text="${#temporals.format(moment.spec.releaseTime, 'yyyy-MM-dd HH:mm')}">2026-01-01 00:00</time>
-        <div class="fireside-card-tags"
-             th:if="${moment.spec.tags != null and !moment.spec.tags.isEmpty()}">
-          <th:block th:each="tag : ${moment.spec.tags}">
-            <a class="fireside-card-tag"
-               th:href="@{/fireside(tag=${tag})}"
-               th:text="${tag}">标签</a>
-          </th:block>
-        </div>
+        <!-- 私密瞬间小锁（仿朋友圈时间旁）：详情页仅作者本人可达 -->
+        <span th:if="${moment.spec.visible != null and moment.spec.visible.name() == 'PRIVATE'}"
+              class="fireside-private-lock" title="仅自己可见">
+          <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M208,76H180V56A52,52,0,0,0,76,56V76H48A20,20,0,0,0,28,96V208a20,20,0,0,0,20,20H208a20,20,0,0,0,20-20V96A20,20,0,0,0,208,76ZM100,56a28,28,0,0,1,56,0V76H100ZM204,204H52V100H204Z"/></svg>
+        </span>
         <div class="fireside-actions">
           <button type="button" class="fireside-like fireside-action"
                   th:attr="data-name=${moment.metadata.name}"
@@ -98,6 +123,20 @@
       <p>© <span th:text="${#temporals.format(#temporals.createNow(), 'yyyy')}">2026</span>
         <span th:text="${site.title}">站点名称</span></p>
     </footer>
+
+    <!-- 右下浮动列：配色切换（常驻）+ 返回顶部（滚过一屏出现，长评论区时有用） -->
+    <div class="fireside-fabs">
+      <button type="button" id="fs-top" class="fireside-fab fireside-fab-collapsed" title="返回顶部">
+        <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M216.49 168.49a12 12 0 0 1-17 0L128 97l-71.51 71.49a12 12 0 0 1-17-17l80-80a12 12 0 0 1 17 0l80 80a12 12 0 0 1 0 17"/></svg>
+      </button>
+      <button type="button" id="fs-scheme" class="fireside-fab"
+              th:if="${display.effectiveAllowSchemeToggle()}"
+              title="配色：跟随系统">
+        <svg class="fireside-icon fireside-scheme-auto" viewBox="0 0 256 256" aria-hidden="true"><path d="M128,20A108,108,0,1,0,236,128,108.12,108.12,0,0,0,128,20Zm0,192a84,84,0,1,1,84-84A84.09,84.09,0,0,1,128,212ZM128,44a84,84,0,0,1,0,168Z"/></svg>
+        <svg class="fireside-icon fireside-scheme-sun" viewBox="0 0 256 256" aria-hidden="true"><path d="M116,36V20a12,12,0,0,1,24,0V36a12,12,0,0,1-24,0Zm80,92a68,68,0,1,1-68-68A68.07,68.07,0,0,1,196,128Zm-24,0a44,44,0,1,0-44,44A44.05,44.05,0,0,0,172,128ZM51.51,68.49a12,12,0,1,0,17-17l-12-12a12,12,0,0,0-17,17Zm0,119-12,12a12,12,0,0,0,17,17l12-12a12,12,0,1,0-17-17ZM196,72a12,12,0,0,0,8.49-3.51l12-12a12,12,0,0,0-17-17l-12,12A12,12,0,0,0,196,72Zm8.49,115.51a12,12,0,0,0-17,17l12,12a12,12,0,0,0,17-17ZM48,128a12,12,0,0,0-12-12H20a12,12,0,0,0,0,24H36A12,12,0,0,0,48,128Zm80,80a12,12,0,0,0-12,12v16a12,12,0,0,0,24,0V220A12,12,0,0,0,128,208Zm108-92H220a12,12,0,0,0,0,24h16a12,12,0,0,0,0-24Z"/></svg>
+        <svg class="fireside-icon fireside-scheme-moon" viewBox="0 0 256 256" aria-hidden="true"><path d="M236.37,139.4a12,12,0,0,0-12-3A84.07,84.07,0,0,1,119.6,31.59a12,12,0,0,0-15-15A108.86,108.86,0,0,0,49.69,55.07,108,108,0,0,0,136,228a107.09,107.09,0,0,0,64.93-21.69,108.86,108.86,0,0,0,38.44-54.94A12,12,0,0,0,236.37,139.4Zm-49.88,47.74A84,84,0,0,1,68.86,69.51,84.93,84.93,0,0,1,92.27,48.29Q92,52.13,92,56A108.12,108.12,0,0,0,200,164q3.87,0,7.71-.27A84.79,84.79,0,0,1,186.49,187.14Z"/></svg>
+      </button>
+    </div>
 
     <!-- JS：点赞 / 评论定位 / 复制链接交互 -->
     <script th:src="@{/plugins/plugin-fireside/assets/static/fireside.js?v={version}(version=${pluginVersion})}"></script>

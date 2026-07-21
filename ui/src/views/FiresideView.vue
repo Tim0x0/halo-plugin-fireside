@@ -133,11 +133,18 @@ function isPaused(link: Link) {
   return link.metadata.annotations?.[PAUSED_ANNO] === 'true'
 }
 
-function statusDotClass(link: Link) {
-  if (isPaused(link)) return 'is-warning'
+// 侧边栏状态点只标异常：绿点叠在名称+计数旁像“未读”角标，正常态不显示；
+// 暂停已有“暂停”文字标注，也不再加点
+function statusDotClass(link: Link): string | null {
+  if (isPaused(link)) return null
   const spec = statuses.value.get(link.metadata.name)?.spec
   if (!spec?.lastFetchedAt) return 'is-muted'
-  return spec.lastError ? 'is-error' : 'is-success'
+  return spec.lastError ? 'is-error' : null
+}
+
+function statusDotTitle(link: Link) {
+  const meta = statusMetaOf(statuses.value.get(link.metadata.name))
+  return meta.description ? `${meta.label}：${meta.description}` : meta.label
 }
 
 function itemCountOf(link: Link) {
@@ -428,7 +435,12 @@ onMounted(reload)
                 {{ displayNameOf(link) }}
                 <em v-if="isPaused(link)" class="fs-source__paused">暂停</em>
               </span>
-              <span class="fs-dot" :class="statusDotClass(link)"></span>
+              <span
+                v-if="statusDotClass(link)"
+                class="fs-dot"
+                :class="statusDotClass(link)"
+                :title="statusDotTitle(link)"
+              ></span>
               <span class="fs-source__count">{{ itemCountOf(link) }}</span>
             </button>
             <div v-if="!links.length" class="fs-sidebar__empty">
@@ -808,7 +820,7 @@ onMounted(reload)
   color: var(--fs-text-muted);
 }
 
-/* ── 状态点（侧边栏） ─────────────────────── */
+/* ── 状态点（侧边栏，仅异常态显示）───────────── */
 .fs-dot {
   width: 0.375rem;
   height: 0.375rem;
@@ -817,16 +829,8 @@ onMounted(reload)
   background: #d4d4d8;
 }
 
-.fs-dot.is-success {
-  background: #22c55e;
-}
-
 .fs-dot.is-error {
   background: #ef4444;
-}
-
-.fs-dot.is-warning {
-  background: #f97316;
 }
 
 /* ── 主区 ─────────────────────────────── */

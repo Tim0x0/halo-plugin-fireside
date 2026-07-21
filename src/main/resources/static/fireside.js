@@ -27,11 +27,21 @@
           cleanTagLines(p);
         }
       });
-      // 剩余标签（混排行/不在段落里的散落标签）退化为纯文本
+      // 剩余标签（混排行/不在段落里的散落标签）退化为无链接的行内 chip：
+      // 不增删任何字符（自身/友链统一），样式复用顶部标签栏的灰底圆角语言
       var rest = content.querySelectorAll('a.tag');
       Array.prototype.forEach.call(rest, function (a) {
-        a.replaceWith(document.createTextNode(a.textContent));
+        var chip = document.createElement('span');
+        chip.className = 'fireside-inline-tag';
+        chip.textContent = a.textContent;
+        a.replaceWith(chip);
       });
+      // 纯标签正文（如“#日常”配九图）清理后已无内容：移除容器本身，
+      // 让图片网格恢复紧贴头部的负边距规则，与“本无正文”的瞬间渲染一致
+      if (!content.textContent.trim()
+        && !content.querySelector('img,video,audio,iframe')) {
+        content.remove();
+      }
     });
   }
 
@@ -228,16 +238,1005 @@
     }, { passive: false });
   }
 
-  // 返回顶部：滚过一屏后出现
+  // 返回顶部：滚过一屏后出现（折叠类走 CSS 高度/透明度缓动，比 hidden 柔和）
   var topBtn = document.getElementById('fs-top');
   if (topBtn) {
     var syncTopBtn = function () {
-      topBtn.hidden = window.scrollY < window.innerHeight;
+      topBtn.classList.toggle('fireside-fab-collapsed',
+        window.scrollY < window.innerHeight);
     };
     window.addEventListener('scroll', syncTopBtn, { passive: true });
     syncTopBtn();
     topBtn.addEventListener('click', function () {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
+  }
+
+  // 配色切换：三态循环（自动→浅→深），选择存 localStorage。
+  // 首帧应用在模板 <head> 内联脚本完成，这里只负责循环与图标/提示同步
+  var schemeBtn = document.getElementById('fs-scheme');
+  if (schemeBtn) {
+    var SCHEME_KEY = 'fireside.scheme';
+    var SCHEME_ORDER = ['auto', 'light', 'dark'];
+    var SCHEME_TITLE = {
+      auto: '配色：跟随系统',
+      light: '配色：浅色',
+      dark: '配色：深色'
+    };
+    var currentScheme = function () {
+      var value = document.documentElement.getAttribute('data-fs-scheme');
+      return SCHEME_ORDER.indexOf(value) !== -1 ? value : 'auto';
+    };
+    var syncSchemeTitle = function () {
+      schemeBtn.title = SCHEME_TITLE[currentScheme()];
+    };
+    schemeBtn.addEventListener('click', function () {
+      var next = SCHEME_ORDER[
+        (SCHEME_ORDER.indexOf(currentScheme()) + 1) % SCHEME_ORDER.length];
+      // 图标显隐由 CSS 按该属性切换，无需手动改 DOM
+      document.documentElement.setAttribute('data-fs-scheme', next);
+      // 同步官方评论组件的配色契约（其 var.css 按 data-color-scheme 切换）
+      document.documentElement.setAttribute('data-color-scheme', next);
+      try {
+        localStorage.setItem(SCHEME_KEY, next);
+      } catch (e) { /* 隐私模式下 localStorage 不可用，忽略 */ }
+      syncSchemeTitle();
+    });
+    syncSchemeTitle();
+  }
+
+  /* ===== 发瞬间（入口与浮层仅登录用户的模板会渲染，访客直接跳过） ===== */
+  var PERMISSIONS_API = '/apis/api.console.halo.run/v1alpha1/users/-/permissions';
+  var UC_MOMENT_API = '/apis/uc.api.moment.halo.run/v1alpha1/moments';
+  var UC_UPLOAD_API = '/apis/uc.api.storage.halo.run/v1alpha1/attachments/-/upload';
+  var UC_TAGS_API = '/apis/uc.api.moment.halo.run/v1alpha1/tags';
+  var COMPOSE_MAX_MEDIA = 9;
+
+  var composeEntry = document.getElementById('fs-compose-entry');
+  var composeBox = document.getElementById('fs-compose');
+  if (composeEntry && composeBox) {
+    initCompose();
+  }
+
+  function initCompose() {
+    var textInput = document.getElementById('fs-compose-text');
+    var tagsBox = document.getElementById('fs-compose-tags');
+    var suggestBox = document.getElementById('fs-compose-suggest');
+    var visibleBtn = document.getElementById('fs-compose-visible');
+    var visibleValue = document.getElementById('fs-compose-visible-value');
+    var fileInput = document.getElementById('fs-compose-file');
+    var addBtn = document.getElementById('fs-compose-add');
+    var mediaGrid = document.getElementById('fs-compose-media');
+    // 发表按钮有两个实例（移动端顶栏 + 桌面端底部），状态需同步
+    var submitBtns = Array.prototype.slice.call(
+      composeBox.querySelectorAll('.fireside-compose-submit'));
+    var tip = document.getElementById('fs-compose-tip');
+    // 已选图片：{ file, url, originType, uploading, failed, objectUrl, el }
+    // file 是原始 File，仿微信朋友圈到点“发表”才上传；url 上传成功后才有值
+    var mediaItems = [];
+    var submitting = false;
+    // 谁可以看：false=公开(PUBLIC)，true=私密(PRIVATE，仅自己登录后可见)
+    var isPrivate = false;
+    // 标签识别：官方 TagsExtension 同款字符集，必须以空白终止（打完空格才生效）；
+    // 额外要求 # 前是行首/空白，避免误伤 URL 锚点等混排井号
+    var TAG_CHARS = '[\\u4E00-\\u9FFFa-zA-Z0-9]';
+    var TAG_SCAN = new RegExp('(^|\\s)#(' + TAG_CHARS + '+)(?=\\s)', 'g');
+    var TAG_AT_CARET = new RegExp('(^|\\s)#(' + TAG_CHARS + '*)$');
+    // 联想状态
+    var suggestItems = [];
+    var suggestIndex = -1;
+    var suggestFragment = null;
+    var suggestTimer = null;
+    var suggestSeq = 0;
+    // 输入法组词过程不解析，compositionend 后统一处理
+    var composing = false;
+
+    // 入口显隐走官方 uiPermissions 契约（Console/UC 菜单同款判断）；
+    // 超管的权限列表是通配符 '*'，必须一并判断
+    fetch(PERMISSIONS_API)
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (data) {
+        var perms = (data && data.uiPermissions) || [];
+        if (perms.indexOf('*') !== -1
+          || perms.indexOf('uc:plugin:moments:publish') !== -1) {
+          composeEntry.hidden = false;
+        }
+      })
+      .catch(function () { /* 探测失败保持隐藏即可，不打扰页面 */ });
+
+    composeEntry.addEventListener('click', openCompose);
+    Array.prototype.forEach.call(
+      composeBox.querySelectorAll('[data-compose-close]'),
+      function (el) { el.addEventListener('click', closeCompose); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !composeBox.hidden) {
+        closeCompose();
+      }
+    });
+    addBtn.addEventListener('click', function () {
+      // 发表过程中（正在上传/提交）不允许再改动图片
+      if (submitting) {
+        return;
+      }
+      fileInput.click();
+    });
+    fileInput.addEventListener('change', function () {
+      if (!submitting) {
+        Array.prototype.forEach.call(fileInput.files, addMedia);
+      }
+      // 清空 value，同一张图删除后可再次选择
+      fileInput.value = '';
+    });
+    visibleBtn.addEventListener('click', function () {
+      isPrivate = !isPrivate;
+      visibleValue.textContent = isPrivate ? '私密' : '公开';
+      visibleBtn.classList.toggle('is-private', isPrivate);
+    });
+    submitBtns.forEach(function (btn) {
+      btn.addEventListener('click', handlePublish);
+    });
+    textInput.addEventListener('compositionstart', function () {
+      composing = true;
+    });
+    textInput.addEventListener('compositionend', function () {
+      composing = false;
+      onTextChange();
+    });
+    textInput.addEventListener('input', function () {
+      if (!composing) {
+        onTextChange();
+      }
+    });
+    // 光标移动（点击/方向键跳转）也会改变“光标处未完成标签”的判定
+    textInput.addEventListener('click', function () {
+      updateSuggest();
+    });
+    textInput.addEventListener('keyup', function (e) {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight'
+        || e.key === 'Home' || e.key === 'End') {
+        updateSuggest();
+      }
+    });
+    textInput.addEventListener('keydown', handleSuggestKeydown);
+    // 点击输入框与联想条以外的位置时收起联想条（如去点“添加图片”）。
+    // 点候选项时其自身 click 先于本监听执行，联想条已收起，此处自然空跑
+    document.addEventListener('click', function (e) {
+      if (!suggestBox.hidden && e.target !== textInput
+        && !suggestBox.contains(e.target)) {
+        hideSuggest();
+      }
+    });
+    syncTagChips();
+
+    function openCompose() {
+      composeBox.hidden = false;
+      document.body.style.overflow = 'hidden';
+      textInput.focus();
+    }
+
+    function closeCompose() {
+      // 仿微信：发表进行中不允许退出，否则上传/提交与浮层状态会脱节
+      // （网络异常最终会走失败分支解锁，不会困住用户）
+      if (submitting) {
+        showTip('正在发表，请稍候…');
+        return;
+      }
+      composeBox.hidden = true;
+      document.body.style.overflow = '';
+      hideSuggest();
+    }
+
+    function showTip(message, ok) {
+      tip.textContent = message;
+      tip.hidden = false;
+      tip.classList.toggle('is-ok', !!ok);
+    }
+
+    function hideTip() {
+      tip.hidden = true;
+      tip.classList.remove('is-ok');
+    }
+
+    /** 仿微信朋友圈：选图只做本地预览（objectURL），到点“发表”才统一上传
+     * （见 uploadPendingMedia）。中途关闭浮层、移除图片都不会往附件库
+     * 留下用不上的孤儿文件 */
+    function addMedia(file) {
+      if (file.type.indexOf('image/') !== 0) {
+        return;
+      }
+      if (mediaItems.length >= COMPOSE_MAX_MEDIA) {
+        showTip('最多添加 ' + COMPOSE_MAX_MEDIA + ' 张图片');
+        return;
+      }
+      hideTip();
+      var item = {
+        file: file,
+        url: '',
+        originType: file.type,
+        uploading: false,
+        failed: false,
+        objectUrl: URL.createObjectURL(file),
+        el: null
+      };
+      item.el = buildMediaCell(item);
+      mediaGrid.insertBefore(item.el, addBtn);
+      mediaItems.push(item);
+      syncAddButton();
+    }
+
+    function buildMediaCell(item) {
+      var cell = document.createElement('div');
+      cell.className = 'fireside-compose-item';
+      var img = document.createElement('img');
+      img.src = item.objectUrl;
+      img.alt = '';
+      // 禁掉浏览器原生的图片拖拽，避免抢占自定义拖拽排序的指针流
+      img.draggable = false;
+      var remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'fireside-compose-remove';
+      remove.title = '移除';
+      remove.textContent = '×';
+      remove.addEventListener('click', function () {
+        // 发表中不许移除（上传计数会悬空）；拖拽中的误触也一并挡掉
+        if (submitting || (drag && drag.active)) {
+          return;
+        }
+        URL.revokeObjectURL(item.objectUrl);
+        cell.remove();
+        var index = mediaItems.indexOf(item);
+        if (index > -1) {
+          mediaItems.splice(index, 1);
+        }
+        syncAddButton();
+      });
+      cell.appendChild(img);
+      cell.appendChild(remove);
+      cell.addEventListener('pointerdown', function (e) {
+        onCellPointerDown(item, e);
+      });
+      // 长按拖拽期间不弹系统菜单（Android 长按、桌面右键对小预览图无意义）
+      cell.addEventListener('contextmenu', function (e) {
+        e.preventDefault();
+      });
+      return cell;
+    }
+
+    function syncAddButton() {
+      addBtn.hidden = mediaItems.length >= COMPOSE_MAX_MEDIA;
+    }
+
+    /* ===== 图片拖拽排序（仿微信朋友圈）=====
+     * 桌面按住即拖；移动端长按 350ms 拖起（等待期滑动视为想滚动页面）。
+     * 拖起后原格子半透明占位、浮影跟手，划过其他格子时以 FLIP 动画实时
+     * 让位，松手浮影飞回落点。顺序始终同步维护在 mediaItems 数组，
+     * 发表时按此顺序出图。零依赖 Pointer Events 实现，与本文件风格一致 */
+    var LONG_PRESS_MS = 350;   // 移动端长按触发时长
+    var DRAG_START_PX = 6;     // 桌面：位移超过该距离才算拖拽（区分普通点击）
+    var CANCEL_PRESS_PX = 10;  // 移动端：长按等待期滑动超过该距离则放弃拖拽
+    var SWAP_LOCK_MS = 120;    // 每次让位后的命中锁，避免与飞行中的格子来回互换
+    // 当前拖拽会话：{ item, cell, pointerId, startX, startY, active,
+    //   ghost, rect, timer, lastSwap }，同一时刻只允许一个指针拖拽
+    var drag = null;
+
+    function onCellPointerDown(item, e) {
+      if (submitting || drag) {
+        return;
+      }
+      // 仅响应鼠标主键；触摸/笔的 button 为 0 或 -1（pointermove 时），都放行
+      if (e.button > 0) {
+        return;
+      }
+      if (e.target.closest('.fireside-compose-remove')) {
+        return;
+      }
+      drag = {
+        item: item,
+        cell: item.el,
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        active: false,
+        ghost: null,
+        rect: null,
+        timer: 0,
+        lastSwap: 0
+      };
+      if (e.pointerType !== 'mouse') {
+        drag.timer = setTimeout(function () {
+          startDrag(e);
+        }, LONG_PRESS_MS);
+      }
+      document.addEventListener('pointermove', onDragPointerMove);
+      document.addEventListener('pointerup', onDragPointerUp);
+      document.addEventListener('pointercancel', onDragPointerUp);
+    }
+
+    function onDragPointerMove(e) {
+      if (!drag || e.pointerId !== drag.pointerId) {
+        return;
+      }
+      if (!drag.active) {
+        var dx = e.clientX - drag.startX;
+        var dy = e.clientY - drag.startY;
+        var dist = Math.sqrt(dx * dx + dy * dy);
+        if (drag.timer) {
+          // 长按等待期出现明显滑动：用户是想滚动页面，放弃本次拖拽
+          if (dist > CANCEL_PRESS_PX) {
+            cleanupDrag(false);
+          }
+        } else if (dist > DRAG_START_PX) {
+          startDrag(e);
+        }
+        if (!drag || !drag.active) {
+          return;
+        }
+      }
+      moveGhost(e);
+      hitTest(e);
+    }
+
+    function startDrag(e) {
+      clearTimeout(drag.timer);
+      drag.timer = 0;
+      drag.active = true;
+      drag.rect = drag.cell.getBoundingClientRect();
+      // 捕获指针：手指/鼠标移出格子甚至窗口后事件仍持续派发过来
+      try {
+        drag.cell.setPointerCapture(drag.pointerId);
+      } catch (err) { /* 指针恰好已释放时会抛错，忽略 */ }
+      drag.ghost = buildGhost(drag.cell, drag.rect);
+      drag.cell.classList.add('is-dragging');
+      document.body.classList.add('fireside-dragging');
+      // 格子的 touch-action:pan-y 把纵向滚动留给了浏览器，
+      // 拖起后必须显式接管，否则移动端拖图会连带滚屏
+      document.addEventListener('touchmove', blockScrollWhileDrag, { passive: false });
+      if (navigator.vibrate) {
+        // 仿微信拖起瞬间的轻触感反馈（iOS 网页不支持，静默无害）
+        navigator.vibrate(15);
+      }
+      moveGhost(e);
+    }
+
+    function blockScrollWhileDrag(e) {
+      e.preventDefault();
+    }
+
+    /** 浮影 = 只含图片的克隆，fixed 定位在原格子处，之后用 transform 跟手 */
+    function buildGhost(cell, rect) {
+      var ghost = document.createElement('div');
+      ghost.className = 'fireside-compose-ghost';
+      ghost.appendChild(cell.querySelector('img').cloneNode(false));
+      ghost.style.left = rect.left + 'px';
+      ghost.style.top = rect.top + 'px';
+      ghost.style.width = rect.width + 'px';
+      ghost.style.height = rect.height + 'px';
+      document.body.appendChild(ghost);
+      return ghost;
+    }
+
+    function moveGhost(e) {
+      drag.ghost.style.transform = 'translate(' + (e.clientX - drag.startX) + 'px,'
+        + (e.clientY - drag.startY) + 'px) scale(1.05)';
+    }
+
+    function hitTest(e) {
+      var now = Date.now();
+      if (now - drag.lastSwap < SWAP_LOCK_MS) {
+        return;
+      }
+      // 浮影是 pointer-events:none，这里取到的是其正下方的真实元素
+      var el = document.elementFromPoint(e.clientX, e.clientY);
+      var cell = el ? el.closest('.fireside-compose-item') : null;
+      if (!cell || cell === drag.cell || !mediaGrid.contains(cell)) {
+        return;
+      }
+      for (var i = 0; i < mediaItems.length; i++) {
+        if (mediaItems[i].el === cell) {
+          reorderTo(mediaItems[i]);
+          drag.lastSwap = now;
+          return;
+        }
+      }
+    }
+
+    /** 把拖拽中的图片挪到目标图片的位置：数组与 DOM 同步调整，
+     * 其余格子用 FLIP 从旧视觉位置平滑滑到新布局位置 */
+    function reorderTo(target) {
+      var fromIdx = mediaItems.indexOf(drag.item);
+      var toIdx = mediaItems.indexOf(target);
+      if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) {
+        return;
+      }
+      // FLIP-first：记下各格子当前视觉位置（可能正处于上一轮让位动画途中），
+      // 随后清掉旧动画变换，让 DOM 调整后能量到真实的新布局位置
+      var snapshot = mediaItems.map(function (m) {
+        return { el: m.el, rect: m.el.getBoundingClientRect() };
+      });
+      snapshot.forEach(function (s) {
+        s.el.style.transition = 'none';
+        s.el.style.transform = '';
+      });
+      mediaItems.splice(fromIdx, 1);
+      mediaItems.splice(toIdx, 0, drag.item);
+      mediaGrid.insertBefore(drag.item.el,
+        fromIdx < toIdx ? target.el.nextSibling : target.el);
+      // FLIP-invert & play：整段同步执行，中间态不会被绘制
+      snapshot.forEach(function (s) {
+        if (s.el === drag.cell) {
+          return; // 源格子有浮影代言，占位直接跳到新位置即可
+        }
+        var now = s.el.getBoundingClientRect();
+        var dx = s.rect.left - now.left;
+        var dy = s.rect.top - now.top;
+        if (!dx && !dy) {
+          return;
+        }
+        s.el.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+        void s.el.offsetWidth; // 强制回流，让起点先生效再播放过渡
+        s.el.style.transition = 'transform 0.18s ease';
+        s.el.style.transform = '';
+      });
+    }
+
+    function onDragPointerUp(e) {
+      if (!drag || e.pointerId !== drag.pointerId) {
+        return;
+      }
+      if (drag.active) {
+        finishDrag();
+      } else {
+        // 长按未成或未达拖拽阈值：不拦事件，当普通点击（如点中移除按钮）
+        cleanupDrag(false);
+      }
+    }
+
+    function finishDrag() {
+      var cell = drag.cell;
+      var ghost = drag.ghost;
+      var from = drag.rect;
+      // 拖拽结束后浏览器会对源格子补发一次 click，拦掉避免误触格内按钮
+      suppressNextClick(cell);
+      var to = cell.getBoundingClientRect();
+      ghost.style.transition = 'transform 0.16s ease';
+      ghost.style.transform = 'translate(' + (to.left - from.left) + 'px,'
+        + (to.top - from.top) + 'px) scale(1)';
+      setTimeout(function () {
+        ghost.remove();
+        cell.classList.remove('is-dragging');
+      }, 180);
+      cleanupDrag(true);
+    }
+
+    /** 收尾；keepVisual=true 时浮影与占位态交给 finishDrag 的归位动画清理 */
+    function cleanupDrag(keepVisual) {
+      if (!drag) {
+        return;
+      }
+      clearTimeout(drag.timer);
+      if (!keepVisual) {
+        if (drag.ghost) {
+          drag.ghost.remove();
+        }
+        drag.cell.classList.remove('is-dragging');
+      }
+      document.body.classList.remove('fireside-dragging');
+      document.removeEventListener('pointermove', onDragPointerMove);
+      document.removeEventListener('pointerup', onDragPointerUp);
+      document.removeEventListener('pointercancel', onDragPointerUp);
+      document.removeEventListener('touchmove', blockScrollWhileDrag);
+      drag = null;
+    }
+
+    /** 以捕获方式吞掉紧随 pointerup 的那次 click。click 与 pointerup 在
+     * 同一任务内先后派发，之后的宏任务里移除即可；若本次没有补发 click
+     * （如 pointercancel 收尾），监听也会被移除，不误伤下一次真点击 */
+    function suppressNextClick(el) {
+      function block(ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+      el.addEventListener('click', block, true);
+      setTimeout(function () {
+        el.removeEventListener('click', block, true);
+      }, 0);
+    }
+
+    /* ===== 桌面拖文件入卡片上传（移动端无文件拖拽事件，天然不触发）=====
+     * 整个发表卡片都是接收区，拖悬时高亮提示，松手走 addMedia 复用
+     * 类型过滤与 9 张上限；发表锁定期拖入静默忽略 */
+    var panel = composeBox.querySelector('.fireside-compose-panel');
+    var dropDepth = 0;
+    // 浮层整体（含遮罩）兜底拦掉浏览器默认行为：拖到遮罩上松手时，
+    // 不至于让浏览器直接跳去打开图片文件。dragover 在此层 preventDefault
+    // 对冒泡上来的卡片区事件同样生效，故卡片无需重复监听 dragover
+    composeBox.addEventListener('dragover', function (e) {
+      if (dragHasFiles(e)) {
+        e.preventDefault();
+      }
+    });
+    composeBox.addEventListener('drop', function (e) {
+      if (dragHasFiles(e)) {
+        e.preventDefault();
+      }
+    });
+    panel.addEventListener('dragenter', function (e) {
+      if (!dragHasFiles(e) || submitting) {
+        return;
+      }
+      e.preventDefault();
+      dropDepth++;
+      panel.classList.add('is-dropping');
+    });
+    panel.addEventListener('dragleave', function (e) {
+      if (!dragHasFiles(e)) {
+        return;
+      }
+      // 拖着文件在卡片子元素间穿梭会成对触发 enter/leave，计数归零才算真离开
+      dropDepth--;
+      if (dropDepth <= 0) {
+        dropDepth = 0;
+        panel.classList.remove('is-dropping');
+      }
+    });
+    panel.addEventListener('drop', function (e) {
+      if (!dragHasFiles(e)) {
+        return;
+      }
+      e.preventDefault();
+      dropDepth = 0;
+      panel.classList.remove('is-dropping');
+      if (!submitting) {
+        Array.prototype.forEach.call(e.dataTransfer.files, addMedia);
+      }
+    });
+
+    /** 只认真正的文件拖拽：拖选中文字/页面图片时 types 里没有 'Files'，
+     * 不高亮也不拦默认行为 */
+    function dragHasFiles(e) {
+      var types = e.dataTransfer && e.dataTransfer.types;
+      if (!types) {
+        return false;
+      }
+      for (var i = 0; i < types.length; i++) {
+        if (types[i] === 'Files') {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    /** 纯文本转瞬间正文 HTML：先转义，再把已生效标签替换为官方格式的
+     * a.tag 节点（与瞬间插件 TagsExtension.renderHTML 产物一致：
+     * class/href/data-pjax，井号按官方行为去掉、节点文本为纯标签名），
+     * 最后双换行分段、单换行转 <br>。 */
+    function textToHtml(text, tags) {
+      if (!text) {
+        return '';
+      }
+      var tagSet = {};
+      tags.forEach(function (tag) { tagSet[tag] = true; });
+      var escaped = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+      // 终止符放宽到“空白或结尾”：首尾清理可能吃掉用户敲的终止空格，
+      // tagSet 门禁保证只包装“确实敲过空格”的标签
+      var wrapPattern = new RegExp('(^|\\s)#(' + TAG_CHARS + '+)(?=\\s|$)', 'g');
+      var withTags = escaped.replace(wrapPattern, function (all, boundary, name) {
+        if (!tagSet[name]) {
+          return all;
+        }
+        return boundary + '<a class="tag" href="/moments?tag='
+          + encodeURIComponent(name) + '" data-pjax="">' + name + '</a>';
+      });
+      return withTags.split(/\n{2,}/).map(function (block) {
+        return '<p>' + block.replace(/\n/g, '<br>') + '</p>';
+      }).join('');
+    }
+
+    /** 正文里已生效的标签（# + 官方字符集 + 已敲空白终止），按出现顺序去重 */
+    function parseContentTags(text) {
+      var seen = {};
+      var tags = [];
+      var match;
+      TAG_SCAN.lastIndex = 0;
+      while ((match = TAG_SCAN.exec(text)) !== null) {
+        var tag = match[2];
+        if (!seen[tag]) {
+          seen[tag] = true;
+          tags.push(tag);
+        }
+      }
+      return tags;
+    }
+
+    function onTextChange() {
+      syncTagChips();
+      updateSuggest();
+    }
+
+    /** 标签行 = 正文的实时投影：只展示与删除，不支持行内新增 */
+    function syncTagChips() {
+      var tags = parseContentTags(textInput.value);
+      tagsBox.textContent = '';
+      if (!tags.length) {
+        var empty = document.createElement('span');
+        empty.className = 'fireside-compose-tags-empty';
+        empty.textContent = '在正文中输入 #标签 添加';
+        tagsBox.appendChild(empty);
+        return;
+      }
+      tags.forEach(function (tag) {
+        var chip = document.createElement('span');
+        chip.className = 'fireside-compose-tag-chip';
+        chip.appendChild(document.createTextNode('#' + tag));
+        var remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'fireside-compose-tag-remove';
+        remove.title = '删除标签（同时删除正文里的对应文字）';
+        remove.textContent = '×';
+        remove.addEventListener('click', function () {
+          removeTagFromText(tag);
+        });
+        chip.appendChild(remove);
+        tagsBox.appendChild(chip);
+      });
+    }
+
+    /** chip 的 × 是“替你编辑正文”的快捷方式：删除该标签的所有出现，
+     * 重新解析后 chip 自然消失——正文始终是唯一数据源。
+     * 标签字符集不含正则元字符，无需转义。 */
+    function removeTagFromText(tag) {
+      var pattern = new RegExp('(^|\\s)#' + tag + '(?=\\s|$)', 'g');
+      textInput.value = textInput.value
+        .replace(pattern, '$1')
+        .replace(/ {2,}/g, ' ')
+        .replace(/[ \t]+\n/g, '\n')
+        .replace(/^[ \t]+/, '');
+      onTextChange();
+    }
+
+    /** 光标左侧是否正处于未完成的 #片段（# 后 0..n 个合法字符、未敲空白） */
+    function currentTagFragment() {
+      var pos = textInput.selectionStart;
+      if (pos == null) {
+        return null;
+      }
+      var match = textInput.value.slice(0, pos).match(TAG_AT_CARET);
+      return match ? match[2] : null;
+    }
+
+    function updateSuggest() {
+      var fragment = currentTagFragment();
+      if (fragment === null) {
+        hideSuggest();
+        return;
+      }
+      if (fragment === suggestFragment && !suggestBox.hidden) {
+        return;
+      }
+      suggestFragment = fragment;
+      clearTimeout(suggestTimer);
+      // 停顿 200ms 再查，避免每敲一个字符都打接口
+      suggestTimer = setTimeout(function () {
+        fetchSuggest(fragment);
+      }, 200);
+    }
+
+    function fetchSuggest(fragment) {
+      var seq = ++suggestSeq;
+      fetch(UC_TAGS_API + '?name=' + encodeURIComponent(fragment))
+        .then(function (res) { return res.ok ? res.json() : []; })
+        .then(function (list) {
+          // 过期响应或光标语境已变化则丢弃
+          if (seq !== suggestSeq || currentTagFragment() !== fragment) {
+            return;
+          }
+          renderSuggest(Array.isArray(list) ? list.slice(0, 8) : []);
+        })
+        .catch(function () { /* 联想失败静默，不影响输入 */ });
+    }
+
+    function renderSuggest(list) {
+      suggestItems = list;
+      suggestIndex = -1;
+      suggestBox.textContent = '';
+      if (!list.length) {
+        suggestBox.hidden = true;
+        return;
+      }
+      list.forEach(function (tag) {
+        var item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'fireside-compose-suggest-item';
+        item.textContent = '#' + tag;
+        item.addEventListener('click', function () {
+          applySuggest(tag);
+        });
+        suggestBox.appendChild(item);
+      });
+      suggestBox.hidden = false;
+    }
+
+    function syncSuggestHighlight() {
+      Array.prototype.forEach.call(suggestBox.children, function (el, i) {
+        el.classList.toggle('is-active', i === suggestIndex);
+      });
+    }
+
+    function hideSuggest() {
+      suggestBox.hidden = true;
+      suggestBox.textContent = '';
+      suggestItems = [];
+      suggestIndex = -1;
+      suggestFragment = null;
+      clearTimeout(suggestTimer);
+    }
+
+    /** 选中候选：补全片段为完整标签并补上终止空格，光标落在空格后 */
+    function applySuggest(tag) {
+      var pos = textInput.selectionStart;
+      var before = textInput.value.slice(0, pos);
+      var after = textInput.value.slice(pos);
+      var match = before.match(TAG_AT_CARET);
+      if (!match) {
+        hideSuggest();
+        return;
+      }
+      var start = before.length - match[2].length;
+      var newBefore = before.slice(0, start) + tag + ' ';
+      textInput.value = newBefore + after;
+      textInput.focus();
+      textInput.setSelectionRange(newBefore.length, newBefore.length);
+      hideSuggest();
+      syncTagChips();
+    }
+
+    /** 联想条键盘通道：↑↓ 高亮、Enter 仅在有高亮时选中（否则照常换行）、
+     * Esc 两段式（先收联想条，stopPropagation 拦住 document 上的关浮层） */
+    function handleSuggestKeydown(e) {
+      if (composing || e.isComposing || suggestBox.hidden) {
+        return;
+      }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        var count = suggestItems.length;
+        if (!count) {
+          return;
+        }
+        suggestIndex = (suggestIndex + (e.key === 'ArrowDown' ? 1 : -1) + count) % count;
+        syncSuggestHighlight();
+      } else if (e.key === 'Enter') {
+        if (suggestIndex >= 0 && suggestIndex < suggestItems.length) {
+          e.preventDefault();
+          applySuggest(suggestItems[suggestIndex]);
+        }
+      } else if (e.key === 'Tab' && !e.shiftKey) {
+        // Tab 确认：有高亮选高亮，无高亮选第一条（GitHub/VS Code 惯例）；
+        // Shift+Tab 保持原生的反向移焦点
+        if (suggestItems.length) {
+          e.preventDefault();
+          applySuggest(suggestItems[suggestIndex >= 0 ? suggestIndex : 0]);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        hideSuggest();
+      }
+    }
+
+    function handlePublish() {
+      if (submitting || (drag && drag.active)) {
+        return;
+      }
+      // 标签以“已敲空白终止”的原文判定；首尾空白仅在成文时清理，
+      // textToHtml 的 tagSet 门禁保证清理不会弄丢末尾已生效的标签
+      var rawText = textInput.value;
+      var contentTags = parseContentTags(rawText);
+      var text = rawText.replace(/^\s+|\s+$/g, '');
+      if (!text && !mediaItems.length) {
+        showTip('写点什么，或添加一张图片');
+        return;
+      }
+      submitting = true;
+      setComposeLocked(true);
+      hideTip();
+      // 仿微信朋友圈：点发表才把图片逐张上传，全部就位再创建瞬间；
+      // 有失败则中止发表，再按“发表”只补传失败的（成功的已记住 permalink）
+      uploadPendingMedia(function (failures) {
+        if (failures.length) {
+          submitting = false;
+          setSubmitBusy(false);
+          setComposeLocked(false);
+          showUploadFailure(failures);
+          return;
+        }
+        publishMoment(text, contentTags);
+      });
+    }
+
+    /** 把还没有 permalink 的图片按九宫格槽位顺序逐张上传（微信同款：
+     * 轮到哪张哪张亮“上传中…”，一张完成再传下一张）；中途失败不打断
+     * 后续张，全部结束后统一回调失败错误列表 */
+    function uploadPendingMedia(done) {
+      var pending = mediaItems.filter(function (m) { return !m.url; });
+      if (!pending.length) {
+        done([]);
+        return;
+      }
+      var total = pending.length;
+      var finished = 0;
+      var failures = [];
+      var cursor = 0;
+      pending.forEach(function (m) {
+        m.failed = false;
+        m.el.classList.remove('is-failed');
+      });
+      setSubmitBusy(true, '上传图片 0/' + total + '…');
+      function next() {
+        if (cursor >= pending.length) {
+          return;
+        }
+        uploadOne(pending[cursor++], function (err) {
+          finished++;
+          if (err) {
+            failures.push(err);
+          }
+          setSubmitBusy(true, '上传图片 ' + finished + '/' + total + '…');
+          if (finished === total) {
+            done(failures);
+          } else {
+            next();
+          }
+        });
+      }
+      next();
+    }
+
+    /** 单张图片经 Halo UC 附件接口上传，成功后把 permalink 记回 item */
+    function uploadOne(item, cb) {
+      item.uploading = true;
+      item.el.classList.add('is-uploading');
+      var form = new FormData();
+      form.append('file', item.file);
+      fetch(UC_UPLOAD_API, { method: 'POST', body: form })
+        .then(function (res) {
+          if (!res.ok) {
+            throw Object.assign(new Error('HTTP ' + res.status), { status: res.status });
+          }
+          return res.json();
+        })
+        .then(function (attachment) {
+          // 上传接口保证返回前已解析好 permalink（即图片最终 URL）
+          var permalink = attachment && attachment.status && attachment.status.permalink;
+          if (!permalink) {
+            throw new Error('响应缺少 permalink');
+          }
+          item.url = permalink;
+          item.uploading = false;
+          item.el.classList.remove('is-uploading');
+          cb(null);
+        })
+        .catch(function (err) {
+          item.uploading = false;
+          item.failed = true;
+          item.el.classList.remove('is-uploading');
+          item.el.classList.add('is-failed');
+          console.warn('[围炉] 图片上传失败', err);
+          cb(err || new Error('上传失败'));
+        });
+    }
+
+    /** 权限/配置类错误给定向提示（文案与旧“选图即传”版一致），其余按张数汇总 */
+    function showUploadFailure(failures) {
+      var has403 = failures.some(function (e) { return e && e.status === 403; });
+      var has400 = failures.some(function (e) { return e && e.status === 400; });
+      if (has403) {
+        showTip('没有上传附件的权限（可联系管理员开通），仍可发布纯文字');
+      } else if (has400) {
+        showTip('站点未配置个人中心的附件存储策略，请先在后台配置');
+      } else {
+        showTip(failures.length + ' 张图片上传失败，点“发表”可只重传失败的，也可移除后再发');
+      }
+    }
+
+    function publishMoment(text, contentTags) {
+      setSubmitBusy(true);
+      // payload 结构与瞬间插件官方 UC 发布组件一致；
+      // owner 与 approved 由服务端按当前用户和角色强制覆写；
+      // raw 与 html 同为富文本 HTML（官方模型，后台编辑器直接装载 raw）
+      var contentHtml = textToHtml(text, contentTags);
+      var moment = {
+        apiVersion: 'moment.halo.run/v1alpha1',
+        kind: 'Moment',
+        metadata: { generateName: 'moment-', name: '' },
+        spec: {
+          content: {
+            raw: contentHtml,
+            html: contentHtml,
+            // 走到这里所有图片必已上传成功，按九宫格顺序（可拖拽调整）出图
+            medium: mediaItems.map(function (m) {
+              return { type: 'PHOTO', url: m.url, originType: m.originType };
+            })
+          },
+          releaseTime: new Date().toISOString(),
+          owner: '',
+          visible: isPrivate ? 'PRIVATE' : 'PUBLIC',
+          tags: contentTags,
+          approved: false
+        }
+      };
+      fetch(UC_MOMENT_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(moment)
+      })
+        .then(function (res) {
+          if (!res.ok) {
+            throw Object.assign(new Error('HTTP ' + res.status), { status: res.status });
+          }
+          return res.json();
+        })
+        .then(function (created) {
+          // 免审核角色的瞬间即时生效，刷新后出现在时间线首位；
+          // 待审核的瞬间上不了时间线，提示后关闭浮层
+          if (created && created.spec && created.spec.approved) {
+            location.reload();
+            return;
+          }
+          resetCompose();
+          showTip('已提交，审核通过后展示', true);
+          setTimeout(function () {
+            closeCompose();
+            hideTip();
+          }, 1600);
+        })
+        .catch(function (err) {
+          if (err && err.status === 403) {
+            showTip('没有发布瞬间的权限');
+          } else {
+            showTip('发布失败，请稍后再试');
+          }
+          console.warn('[围炉] 发布瞬间失败', err);
+        })
+        .then(function () {
+          submitting = false;
+          setSubmitBusy(false);
+          setComposeLocked(false);
+        });
+    }
+
+    function setSubmitBusy(busy, label) {
+      submitBtns.forEach(function (btn) {
+        btn.disabled = busy;
+        btn.textContent = busy ? (label || '发表中…') : '发表';
+      });
+    }
+
+    /** 发表进行中锁住可编辑区（payload 采用点发表那一刻的快照，
+     * 中途编辑不会生效，干脆按微信的做法禁掉；移除按钮与拖拽
+     * 已在各自入口用 submitting 挡住） */
+    function setComposeLocked(locked) {
+      textInput.disabled = locked;
+      visibleBtn.disabled = locked;
+      addBtn.disabled = locked;
+    }
+
+    function resetCompose() {
+      textInput.value = '';
+      isPrivate = false;
+      visibleValue.textContent = '公开';
+      visibleBtn.classList.remove('is-private');
+      mediaItems.forEach(function (m) {
+        URL.revokeObjectURL(m.objectUrl);
+        m.el.remove();
+      });
+      mediaItems = [];
+      syncAddButton();
+      syncTagChips();
+      hideSuggest();
+    }
   }
 })();

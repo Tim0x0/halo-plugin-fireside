@@ -48,6 +48,28 @@ spec:
           label: 友链动态标签
           value: 友链
           help: 赋给每条友链动态的标签名（无需带 # 号，展示时自动添加）；主题可用 ?tag=该标签 仅筛出友链动态。留空则使用默认值「友链」
+        - $formkit: checkbox
+          name: showComposeEntry
+          label: 显示发瞬间入口
+          value: true
+          help: 在 /fireside 封面右上角显示相机按钮（仿朋友圈），可在页面内直接发布瞬间。仅对已登录且有「允许发布自己的瞬间」权限的用户可见，访客不可见；无免审核权限的用户发布后需经后台审核才会展示
+        - $formkit: radio
+          name: colorScheme
+          label: 配色方案
+          value: auto
+          options:
+            - label: 跟随系统
+              value: auto
+            - label: 浅色
+              value: light
+            - label: 深色
+              value: dark
+          help: 内置 /fireside 页面的默认配色；允许访客切换时，访客的选择优先于此默认值
+        - $formkit: checkbox
+          name: allowSchemeToggle
+          label: 允许访客切换配色
+          value: true
+          help: 在页面右下角显示 明/暗/自动 切换按钮，访客的选择保存在其浏览器本地。关闭后页面严格按上方默认配色显示
     - group: sync
       label: 同步设置
       formSchema:
