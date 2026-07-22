@@ -118,10 +118,12 @@
       </div>
     </article>
 
-    <!-- 页脚：版权行 -->
+    <!-- 页脚：版权行 + 项目链接 -->
     <footer class="fireside-footer">
       <p>© <span th:text="${#temporals.format(#temporals.createNow(), 'yyyy')}">2026</span>
-        <span th:text="${site.title}">站点名称</span></p>
+        <span th:text="${site.title}">站点名称</span> ·
+        Powered by <a href="https://github.com/Tim0x0/halo-plugin-fireside"
+                      target="_blank" rel="noopener">Fireside</a></p>
     </footer>
 
     <!-- 右下浮动列：配色切换（常驻）+ 返回顶部（滚过一屏出现，长评论区时有用） -->

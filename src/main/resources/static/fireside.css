@@ -459,6 +459,14 @@ body {
 .fireside-footer p {
   margin: 0 0 4px;
 }
+/* 页脚链接跟随页脚文字色（含深色两套选择器），hover 才出下划线 */
+.fireside-footer a {
+  color: inherit;
+  text-decoration: none;
+}
+.fireside-footer a:hover {
+  text-decoration: underline;
+}
 
 /* ===== 右下浮动列：白色胶囊分组（配色切换常驻在下、返回顶部滚动显隐在上） =====
    容器底部锚定，回顶部显隐时配色钮位置不动；圆角与卡片语言一致 */
