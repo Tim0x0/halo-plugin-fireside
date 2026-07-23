@@ -488,7 +488,7 @@ body {
   z-index: 10;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: hidden; /* 圆角裁剪：让子元素 hover 背景自动贴合父容器圆角 */
   border: 1px solid #ececec;
   border-radius: 12px;
   background: #fff;
@@ -504,11 +504,19 @@ body {
   justify-content: center;
   width: 40px;
   height: 40px;
+  /* 清掉 button 默认内边距：否则回顶钮折叠(height:0)后仍被 padding 撑出 2px，
+     悬浮配色钮时顶部露白缝 */
+  padding: 0;
   border: none;
   background: none;
   color: #7f7f7f;
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
+}
+/* 明/暗按钮（#fs-scheme）默认处理：上面直角，下面圆角；
+   回顶钮折叠后由容器 overflow:hidden 负责把 hover 背景裁成全圆角 */
+#fs-scheme {
+  border-radius: 0 0 12px 12px;
 }
 .fireside-fab:hover {
   background: #f7f7f7;
@@ -523,9 +531,9 @@ body {
   border-top: 1px solid #f0f0f0;
   transition: border-top-color 0.25s ease;
 }
-/* 回顶折叠后去掉分隔线占位（transparent 仍占 1px，直接撤宽） */
+/* 回顶折叠后去掉分隔线占位（直接移除 border-top，避免 1px 空隙） */
 #fs-top.fireside-fab-collapsed + .fireside-fab {
-  border-top-width: 0;
+  border-top: none;
 }
 /* 回顶部：高度+透明度折叠缓动，替代 display 的瞬时显隐；
    visibility 延迟到动画结束再隐藏，防止折叠中仍可聚焦/点击。
@@ -1143,10 +1151,18 @@ body.fireside-dragging {
   }
   html:not([data-fs-scheme="light"]) .fireside-fab {
     color: #8a8a8a;
+    border-radius: 12px;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-fabs > .fireside-fab:first-child:not(:last-child) {
+    border-radius: 12px 12px 0 0;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-fabs > .fireside-fab:last-child:not(:first-child) {
+    border-radius: 0 0 12px 12px;
   }
   html:not([data-fs-scheme="light"]) .fireside-fab:hover {
     background: #2a2a2a;
     color: #e0e0e0;
+    border-radius: inherit;
   }
   html:not([data-fs-scheme="light"]) .fireside-fab + .fireside-fab {
     border-top-color: #2a2a2a;
@@ -1337,6 +1353,14 @@ html[data-fs-scheme="dark"] .fireside-fabs {
 }
 html[data-fs-scheme="dark"] .fireside-fab {
   color: #8a8a8a;
+}
+/* 明/暗按钮（#fs-scheme）默认处理：上面直角，下面圆角 */
+html[data-fs-scheme="dark"] #fs-scheme {
+  border-radius: 0 0 12px 12px;
+}
+/* 当明/暗按钮单独存在时（回到顶部按钮折叠后），四个角都圆 */
+html[data-fs-scheme="dark"] .fireside-fabs > #fs-scheme:first-child {
+  border-radius: 12px;
 }
 html[data-fs-scheme="dark"] .fireside-fab:hover {
   background: #2a2a2a;
