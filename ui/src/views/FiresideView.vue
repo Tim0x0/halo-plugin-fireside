@@ -45,6 +45,8 @@ const togglingPause = ref(false)
 const clearing = ref(false)
 // 隐藏/恢复进行中的条目名集合，防止连点并发 PUT 撞乐观锁
 const togglingNames = ref<Set<string>>(new Set())
+// 列表请求序号：快切友链/Tab/翻页时丢弃过期响应，避免后发先至写错列表
+let momentsRequestSeq = 0
 
 // 同步与清空互斥：清空会重置计数，与同步并发会产生错乱结果（后端 409 兜底，这里前置禁用）
 const mutating = computed(() => syncingAll.value || syncingLink.value || clearing.value)
@@ -186,6 +188,7 @@ async function fetchLinks() {
 }
 
 async function fetchMoments() {
+  const seq = ++momentsRequestSeq
   loadingList.value = true
   try {
     // fieldSelector 多条件必须用重复参数（fieldSelector=a&fieldSelector=b），
@@ -201,6 +204,10 @@ async function fetchMoments() {
     const { data } = await axiosInstance.get<ListResult<FriendMoment>>(
       `/apis/fireside.timxs.com/v1alpha1/friendmoments?${query.toString()}`,
     )
+    // 过期响应：用户已切换范围/页码，丢弃
+    if (seq !== momentsRequestSeq) {
+      return
+    }
     moments.value = data.items
     total.value = data.total
     // 页码超界（如隐藏/删除掉当前页最后一条后）时回退到最后一个有效页重取，
@@ -211,9 +218,14 @@ async function fetchMoments() {
       return fetchMoments()
     }
   } catch (e) {
+    if (seq !== momentsRequestSeq) {
+      return
+    }
     Toast.error(errorMessage(e, '加载动态列表失败'))
   } finally {
-    loadingList.value = false
+    if (seq === momentsRequestSeq) {
+      loadingList.value = false
+    }
   }
 }
 
@@ -316,6 +328,44 @@ async function togglePause() {
   }
 }
 
+// 同一友链的 itemCount 写回串行化，避免连点隐藏多条时并行 GET 读到同一旧值、少减/少加
+const itemCountWriteTails = new Map<string, Promise<void>>()
+
+/**
+ * 隐藏/恢复后把 FeedStatus.itemCount 持久化（仅计可见条）。
+ * 同 link 上排队执行；每次取最新版本再 PUT。失败则整表重拉状态。
+ */
+function persistItemCountDelta(linkName: string, delta: number): Promise<void> {
+  const prev = itemCountWriteTails.get(linkName) ?? Promise.resolve()
+  const next = prev
+    .catch(() => {
+      /* 上一笔失败不阻断本笔 */
+    })
+    .then(async () => {
+      try {
+        const { data: latest } = await axiosInstance.get<FeedStatus>(
+          `/apis/fireside.timxs.com/v1alpha1/feedstatuses/${linkName}`,
+        )
+        if (!latest.spec) {
+          latest.spec = { linkName }
+        }
+        const current = Number(latest.spec.itemCount ?? 0)
+        latest.spec.itemCount = Math.max(0, current + delta)
+        const { data: updated } = await axiosInstance.put<FeedStatus>(
+          `/apis/fireside.timxs.com/v1alpha1/feedstatuses/${linkName}`,
+          latest,
+        )
+        statuses.value.set(linkName, updated)
+        statuses.value = new Map(statuses.value)
+      } catch {
+        // 计数写失败不阻断隐藏本身；重拉以恢复与后端一致
+        await fetchLinks()
+      }
+    })
+  itemCountWriteTails.set(linkName, next)
+  return next
+}
+
 async function toggleHidden(moment: FriendMoment) {
   const name = moment.metadata.name
   if (togglingNames.value.has(name)) return
@@ -324,13 +374,23 @@ async function toggleHidden(moment: FriendMoment) {
     const { data: latest } = await axiosInstance.get<FriendMoment>(
       `/apis/fireside.timxs.com/v1alpha1/friendmoments/${name}`,
     )
-    const hiding = !latest.spec.hidden
-    latest.spec.hidden = hiding
+    // 与目标 Tab 对齐：已是目标状态则只刷新列表，避免重复 ±1
+    const wantHidden = !showHidden.value
+    const isHidden = Boolean(latest.spec.hidden)
+    if (isHidden === wantHidden) {
+      await fetchMoments()
+      return
+    }
+    latest.spec.hidden = wantHidden
     await axiosInstance.put(
       `/apis/fireside.timxs.com/v1alpha1/friendmoments/${name}`,
       latest,
     )
-    Toast.success(hiding ? '已隐藏，该条不再对外展示且不会被重新抓取' : '已恢复展示')
+    const linkName = latest.spec.linkName
+    if (linkName) {
+      await persistItemCountDelta(linkName, wantHidden ? -1 : 1)
+    }
+    Toast.success(wantHidden ? '已隐藏，该条不再对外展示且不会被重新抓取' : '已恢复展示')
     await fetchMoments()
   } catch (e) {
     Toast.error(errorMessage(e, '操作失败'))
@@ -564,7 +624,13 @@ onMounted(reload)
         <VEmpty
           v-else-if="!visibleMoments.length"
           :title="showHidden ? '没有已隐藏的动态' : '暂无友链动态'"
-          :message="showHidden ? '在「全部」列表中隐藏的条目会出现在这里' : '填写友链的动态 RSS 地址后，等待定时同步或点击同步按钮'"
+          :message="
+            showHidden
+              ? '在「全部」列表中隐藏的条目会出现在这里'
+              : selectedLink && isPaused(selectedLink)
+                ? '该订阅已暂停同步，恢复后再同步即可抓取最新动态'
+                : '填写友链的动态 RSS 地址后，等待定时同步或点击同步按钮'
+          "
         >
           <template v-if="!showHidden" #actions>
             <VButton
@@ -1131,19 +1197,25 @@ onMounted(reload)
   object-fit: cover;
 }
 
-/* 行操作：hover 浮现，对齐官方列表的克制风格 */
+/* 行操作：触屏常显；精细指针设备上 hover/focus 浮现，避免点不到 */
 .fs-item__actions {
   display: flex;
   flex: none;
   flex-direction: column;
   gap: 0.25rem;
-  opacity: 0;
+  opacity: 1;
   transition: opacity 150ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.fs-item:hover .fs-item__actions,
-.fs-item:focus-within .fs-item__actions {
-  opacity: 1;
+@media (hover: hover) and (pointer: fine) {
+  .fs-item__actions {
+    opacity: 0;
+  }
+
+  .fs-item:hover .fs-item__actions,
+  .fs-item:focus-within .fs-item__actions {
+    opacity: 1;
+  }
 }
 
 .fs-item__action {

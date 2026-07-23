@@ -74,18 +74,20 @@ public class FiresideRouter {
     private Mono<ServerResponse> handleDetail(ServerRequest request) {
         // 该路由必有 name 变量，pathVariable 不会抛异常
         String name = request.pathVariable("name");
-        return firesideFinder.get(name)
-            .flatMap(moment -> templateNameResolver
-                .resolveTemplateNameOrDefault(request.exchange(), "fireside-detail")
-                .flatMap(templateName -> ServerResponse.ok()
-                    .render(templateName, Map.of(
-                        "moment", moment,
-                        TEMPLATE_ID, "fireside-detail",
-                        "display", displayConfig(),
-                        "pluginVersion", pluginContext.getVersion()
-                    ))))
-            .switchIfEmpty(Mono.error(() -> new ResponseStatusException(
-                HttpStatus.NOT_FOUND, "Moment not found: " + name)));
+        // 与列表页一致：先解包 DisplayConfig 再放进 model（不用塞未订阅的 Mono）
+        return displayConfig().flatMap(display ->
+            firesideFinder.get(name)
+                .flatMap(moment -> templateNameResolver
+                    .resolveTemplateNameOrDefault(request.exchange(), "fireside-detail")
+                    .flatMap(templateName -> ServerResponse.ok()
+                        .render(templateName, Map.of(
+                            "moment", moment,
+                            TEMPLATE_ID, "fireside-detail",
+                            "display", display,
+                            "pluginVersion", pluginContext.getVersion()
+                        ))))
+                .switchIfEmpty(Mono.error(() -> new ResponseStatusException(
+                    HttpStatus.NOT_FOUND, "Moment not found: " + name))));
     }
 
     /**

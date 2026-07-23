@@ -61,17 +61,15 @@ POST /apis/console.api.fireside.timxs.com/v1alpha1/links/{name}/clear-moments   
 ### 公开时间线 API（匿名）
 
 ```
-GET /apis/api.fireside.timxs.com/v1alpha1/timeline?page=1&size=10&tag=
+GET /apis/api.fireside.timxs.com/v1alpha1/timeline?size=10&tag=&before=
 ```
 
-返回与 `firesideFinder.timeline` 同源同过滤的 JSON 分页（`size` 上限 50），供主题前端 JS 实现无限滚动。响应结构（字段与 Finder 返回的 `FiresideMomentVo` 一致）：
+与内置 `/fireside` 相同的**游标分页**（`firesideFinder.timelineSlice`）：`before` 为空为第一页，下一页传上一页返回的 `nextCursor`；`size` 默认 10、上限 50。任意翻页深度成本恒定。**仅支持游标，无 `page` 参数。** `nextCursor` 含 `|` 与 `:`，写入查询串前必须 URL 编码（`URLSearchParams` / `encodeURIComponent`），否则浏览器/网关可能直接 400。
+
+响应结构：
 
 ```jsonc
 {
-  "page": 1,
-  "size": 10,
-  "total": 42,
-  "hasNext": true,          // 是否还有下一页——无限滚动的终止判断
   "items": [
     {
       "external": true,               // true=友链条目，false=自身瞬间
@@ -89,41 +87,69 @@ GET /apis/api.fireside.timxs.com/v1alpha1/timeline?page=1&size=10&tag=
       },
       "stats": { "upvote": 0, "totalComment": 0 }
     }
-  ]
+  ],
+  "hasNext": true,          // 是否还有更早的动态——无限滚动的终止判断
+  "nextCursor": "2026-07-14T03:00:00Z|f|friend-moment-xxx"  // 有下一页时非空；作 ?before= 前须编码
 }
 ```
 
-主题侧无限滚动的最小骨架（触底加载下一页）：
+主题侧无限滚动的最小骨架（触底加载更早一页）。**注意**：只有 `content.html`（友链侧已经过服务端白名单清洗）可作 HTML 插入；昵称、头像 URL、外链等须走文本节点或属性赋值，勿拼进 `innerHTML`：
 
 ```html
 <div id="fs-timeline"></div>
 <button id="fs-more">加载更多</button>
 <script>
-  let page = 1, loading = false;
+  let before = '', loading = false;
   const list = document.getElementById('fs-timeline');
   const more = document.getElementById('fs-more');
+
+  function text(s) {
+    return document.createTextNode(s == null ? '' : String(s));
+  }
 
   async function loadMore() {
     if (loading) return;
     loading = true;
-    const res = await fetch(`/apis/api.fireside.timxs.com/v1alpha1/timeline?page=${page}&size=10`);
+    const qs = new URLSearchParams({ size: '10' });
+    if (before) qs.set('before', before);
+    const res = await fetch('/apis/api.fireside.timxs.com/v1alpha1/timeline?' + qs);
     const data = await res.json();
-    for (const m of data.items) {
+    for (const m of data.items || []) {
       const item = document.createElement('article');
-      // content.html 已经过服务端白名单清洗，可直接插入
-      item.innerHTML = `
-        <header>
-          <img src="${m.owner.avatar || ''}" alt="" referrerpolicy="no-referrer">
-          <span>${m.owner.displayName}</span>
-          <time>${new Date(m.spec.releaseTime).toLocaleString()}</time>
-        </header>
-        <div class="content">${m.spec.content.html}</div>
-        ${m.external ? `<a href="${m.sourceUrl}" target="_blank" rel="noreferrer">查看原文</a>` : ''}`;
+      const header = document.createElement('header');
+      if (m.owner && m.owner.avatar) {
+        const img = document.createElement('img');
+        img.src = m.owner.avatar;
+        img.alt = '';
+        img.referrerPolicy = 'no-referrer';
+        header.appendChild(img);
+      }
+      const name = document.createElement('span');
+      name.appendChild(text(m.owner && m.owner.displayName));
+      header.appendChild(name);
+      const time = document.createElement('time');
+      time.appendChild(text(m.spec && m.spec.releaseTime
+        ? new Date(m.spec.releaseTime).toLocaleString() : ''));
+      header.appendChild(time);
+      item.appendChild(header);
+      const content = document.createElement('div');
+      content.className = 'content';
+      // 仅友链/自身经服务端处理的 html 可信任为 HTML
+      content.innerHTML = (m.spec && m.spec.content && m.spec.content.html) || '';
+      item.appendChild(content);
+      if (m.external && m.sourceUrl) {
+        const a = document.createElement('a');
+        a.href = m.sourceUrl;
+        a.target = '_blank';
+        a.rel = 'noreferrer';
+        a.appendChild(text('查看原文'));
+        item.appendChild(a);
+      }
       list.appendChild(item);
     }
-    page += 1;
+    before = data.nextCursor || '';
     loading = false;
-    if (!data.hasNext) more.remove();   // 没有下一页时移除按钮（或解绑滚动监听）
+    if (!data.hasNext) more.remove();
   }
 
   more.addEventListener('click', loadMore);

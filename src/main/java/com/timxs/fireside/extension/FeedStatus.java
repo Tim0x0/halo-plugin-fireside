@@ -49,7 +49,7 @@ public class FeedStatus extends AbstractExtension {
         @Schema(description = "已观测到的最新条目发布时间")
         private Instant latestPublishedAt;
 
-        @Schema(description = "当前保留的条目数")
+        @Schema(description = "当前可见条目数（不含已隐藏；隐藏条目作去重墓碑不计入）")
         private Long itemCount;
     }
 }

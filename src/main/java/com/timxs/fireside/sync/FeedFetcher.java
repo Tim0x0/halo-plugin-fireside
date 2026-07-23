@@ -8,6 +8,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.time.Duration;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferLimitException;
 import org.springframework.core.io.buffer.DataBufferUtils;
@@ -104,8 +105,13 @@ public class FeedFetcher {
         } catch (DataBufferLimitException e) {
             throw new IOException("响应体超过大小上限 " + (MAX_BODY_SIZE / 1024 / 1024) + "MB");
         } catch (IllegalStateException e) {
-            // block(Duration) 超时抛 IllegalStateException——转成可读的中文错误
-            throw new IOException("抓取超时（含重定向的总预算为超时设置的 2 倍）");
+            // block(Duration) 超时抛 IllegalStateException（message 含 Timeout）
+            // 其它非法状态保留原因，避免 FeedStatus 把连接/解码错误误标成超时
+            String message = e.getMessage();
+            if (message != null && message.toLowerCase().contains("timeout")) {
+                throw new IOException("抓取超时（含重定向的总预算为超时设置的 2 倍）");
+            }
+            throw new IOException(StringUtils.defaultIfBlank(message, "抓取失败"), e);
         }
     }
 

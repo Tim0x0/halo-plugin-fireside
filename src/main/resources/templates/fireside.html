@@ -121,16 +121,28 @@
                th:if="${moment.spec.content.html != null and !moment.spec.content.html.isEmpty()}"
                th:utext="${moment.spec.content.html}">正文内容</div>
 
-          <!-- 图片区：纯 img 不带跳转，点击行为交给外部灯箱插件接管 -->
+          <!-- 媒体区：按 type 渲染图/视频/音频；图片点击交给外部灯箱插件接管 -->
           <div class="fireside-media"
                th:if="${!moment.spec.content.medium.isEmpty()}">
             <th:block th:each="item : ${moment.spec.content.medium}">
               <div class="fireside-media-item"
                    th:classappend="${moment.spec.content.medium.size() > 1} ? 'fireside-media-grid' : 'fireside-media-single'">
-                <img th:src="${item.url}"
+                <img th:if="${item.type == null or item.type.name() == 'PHOTO' or item.type.name() == 'POST'}"
+                     th:src="${item.url}"
                      th:alt="${moment.title ?: '图片'}"
                      loading="lazy"
                      referrerpolicy="no-referrer">
+                <video th:if="${item.type != null and item.type.name() == 'VIDEO'}"
+                       th:src="${item.url}"
+                       controls
+                       playsinline
+                       preload="metadata"
+                       referrerpolicy="no-referrer"></video>
+                <audio th:if="${item.type != null and item.type.name() == 'AUDIO'}"
+                       th:src="${item.url}"
+                       controls
+                       preload="metadata"
+                       referrerpolicy="no-referrer"></audio>
               </div>
             </th:block>
           </div>

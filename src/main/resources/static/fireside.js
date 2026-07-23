@@ -110,9 +110,14 @@
 
   function handleLike(btn) {
     var name = btn.dataset.name;
-    if (!name || upvotedNames().indexOf(name) !== -1) {
+    // 已点赞或请求进行中：直接忽略，防止连点并发 POST 重复计数
+    if (!name || btn.dataset.liking === '1'
+      || upvotedNames().indexOf(name) !== -1
+      || btn.classList.contains('fireside-liked')) {
       return;
     }
+    btn.dataset.liking = '1';
+    btn.disabled = true;
     fetch(UPVOTE_API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -135,6 +140,10 @@
       })
       .catch(function (err) {
         console.warn('[围炉] 点赞失败', err);
+        btn.disabled = false;
+      })
+      .then(function () {
+        delete btn.dataset.liking;
       });
   }
 

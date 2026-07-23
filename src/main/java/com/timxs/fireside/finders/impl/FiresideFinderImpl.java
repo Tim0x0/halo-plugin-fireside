@@ -280,7 +280,9 @@ public class FiresideFinderImpl {
      */
     public Mono<ListResult<FiresideMomentVo>> listFriends(Integer page, Integer size) {
         return listFriends(page, size, null);
-    }    public Mono<ListResult<FiresideMomentVo>> listFriends(Integer page, Integer size,
+    }
+
+    public Mono<ListResult<FiresideMomentVo>> listFriends(Integer page, Integer size,
         String linkName) {
         int p = pageNullSafe(page);
         int s = sizeNullSafe(size);

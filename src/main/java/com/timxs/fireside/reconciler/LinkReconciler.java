@@ -1,19 +1,16 @@
 package com.timxs.fireside.reconciler;
 
-import static run.halo.app.extension.index.query.Queries.equal;
-
 import com.timxs.fireside.FiresideConst;
-import com.timxs.fireside.extension.FeedStatus;
-import com.timxs.fireside.extension.FriendMoment;
 import com.timxs.fireside.stub.Link;
+import com.timxs.fireside.sync.RssSyncService;
+import com.timxs.fireside.sync.SyncInProgressException;
+import java.time.Duration;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Component;
 import run.halo.app.extension.ExtensionClient;
 import run.halo.app.extension.ExtensionUtil;
-import run.halo.app.extension.ListOptions;
 import run.halo.app.extension.MetadataUtil;
 import run.halo.app.extension.controller.Controller;
 import run.halo.app.extension.controller.ControllerBuilder;
@@ -21,7 +18,9 @@ import run.halo.app.extension.controller.Reconciler;
 
 /**
  * 监听 Link 变化做级联清理：Link 被删除或动态 RSS 注解被清空时，
- * 删除该 linkName 下全部 FriendMoment。
+ * 删除该 linkName 下全部 FriendMoment 与对应 FeedStatus。
+ * 清理走 {@link RssSyncService#cleanupLinkSubscription}，与同步/清空共用一把锁，
+ * 避免同步写入与级联删除交错留下孤儿数据；锁被占用时稍后重试。
  * 不给 Link 加 finalizer（那是别的插件的数据，插件卸载后残留 finalizer 会卡住 Link 删除）。
  */
 @Slf4j
@@ -29,7 +28,10 @@ import run.halo.app.extension.controller.Reconciler;
 @RequiredArgsConstructor
 public class LinkReconciler implements Reconciler<Reconciler.Request> {
 
+    private static final Duration RETRY_AFTER = Duration.ofSeconds(5);
+
     private final ExtensionClient client;
+    private final RssSyncService syncService;
 
     @Override
     public Result reconcile(Request request) {
@@ -39,24 +41,17 @@ public class LinkReconciler implements Reconciler<Reconciler.Request> {
                 || StringUtils.isBlank(
                     MetadataUtil.nullSafeAnnotations(link).get(FiresideConst.RSS_URL_ANNO)))
             .orElse(true);
-        if (shouldCleanup) {
-            deleteFriendMoments(linkName);
-            // 同步状态一并清理（暂停不会走到这里，暂停时状态保留）
-            client.fetch(FeedStatus.class, linkName).ifPresent(client::delete);
+        if (!shouldCleanup) {
+            return Result.doNotRetry();
         }
-        return Result.doNotRetry();
-    }
-
-    private void deleteFriendMoments(String linkName) {
-        var options = ListOptions.builder()
-            .fieldQuery(equal("spec.linkName", linkName))
-            .build();
-        var friendMoments = client.listAll(FriendMoment.class, options, Sort.unsorted());
-        if (friendMoments.isEmpty()) {
-            return;
+        try {
+            syncService.cleanupLinkSubscription(linkName);
+            return Result.doNotRetry();
+        } catch (SyncInProgressException e) {
+            // 同步持锁——稍后重试，避免本轮放弃后留下未清理数据
+            log.info("[围炉] 友链 [{}] 级联清理延后：{}", linkName, e.getMessage());
+            return new Result(true, RETRY_AFTER);
         }
-        friendMoments.forEach(client::delete);
-        log.info("[围炉] 友链 [{}] 已删除或取消订阅，级联清理 {} 条动态", linkName, friendMoments.size());
     }
 
     @Override

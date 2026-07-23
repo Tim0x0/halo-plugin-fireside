@@ -315,22 +315,33 @@ body {
 .fireside-media-single {
   width: fit-content;
 }
-.fireside-media-single img {
+.fireside-media-single img,
+.fireside-media-single video {
   max-width: 100%;
   max-height: 300px;
   width: auto;
   object-fit: cover;
+}
+.fireside-media-single audio {
+  width: 100%;
+  max-width: 280px;
+  margin: 4px 0;
 }
 /* 多图：正方形缩略图；加载占位色放在 img 上，加载完成即被图片覆盖 */
 .fireside-media-grid {
   width: 100%;
   aspect-ratio: 1;
 }
-.fireside-media-grid img {
+.fireside-media-grid img,
+.fireside-media-grid video {
   width: 100%;
   height: 100%;
   object-fit: cover;
   background: #f5f5f5;
+}
+.fireside-media-grid audio {
+  width: 100%;
+  height: 100%;
 }
 /* 恰好 4 图：2×2 田字格，与朋友圈一致 */
 .fireside-media:has(.fireside-media-item:nth-child(4)):not(:has(.fireside-media-item:nth-child(5))) {
@@ -512,18 +523,23 @@ body {
   border-top: 1px solid #f0f0f0;
   transition: border-top-color 0.25s ease;
 }
+/* 回顶折叠后去掉分隔线占位（transparent 仍占 1px，直接撤宽） */
 #fs-top.fireside-fab-collapsed + .fireside-fab {
-  border-top-color: transparent;
+  border-top-width: 0;
 }
 /* 回顶部：高度+透明度折叠缓动，替代 display 的瞬时显隐；
-   visibility 延迟到动画结束再隐藏，防止折叠中仍可聚焦/点击 */
+   visibility 延迟到动画结束再隐藏，防止折叠中仍可聚焦/点击。
+   flex 子项默认 min-height:auto 会按内容撑开，折叠时必须 min-height:0
+   才能真正收成 0，否则配色钮上方会留出一整格空白 */
 #fs-top {
   overflow: hidden;
+  flex: none;
   transition: height 0.25s ease, opacity 0.25s ease,
     color 0.15s, background 0.15s;
 }
 #fs-top.fireside-fab-collapsed {
   height: 0;
+  min-height: 0;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -1092,7 +1108,8 @@ body.fireside-dragging {
     background: #1e1e1e;
     color: #8a8a8a;
   }
-  html:not([data-fs-scheme="light"]) .fireside-media-grid img {
+  html:not([data-fs-scheme="light"]) .fireside-media-grid img,
+  html:not([data-fs-scheme="light"]) .fireside-media-grid video {
     background: #1e1e1e;
   }
   html:not([data-fs-scheme="light"]) .fireside-card-time {
@@ -1285,7 +1302,8 @@ html[data-fs-scheme="dark"] .fireside-inline-tag {
   background: #1e1e1e;
   color: #8a8a8a;
 }
-html[data-fs-scheme="dark"] .fireside-media-grid img {
+html[data-fs-scheme="dark"] .fireside-media-grid img,
+html[data-fs-scheme="dark"] .fireside-media-grid video {
   background: #1e1e1e;
 }
 html[data-fs-scheme="dark"] .fireside-card-time {

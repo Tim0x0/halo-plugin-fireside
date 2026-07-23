@@ -1,6 +1,5 @@
 package com.timxs.fireside;
 
-import com.timxs.fireside.config.DisplayConfig;
 import com.timxs.fireside.finders.impl.FiresideFinderImpl;
 import com.timxs.fireside.route.FiresideRouter;
 import org.springframework.context.annotation.Bean;

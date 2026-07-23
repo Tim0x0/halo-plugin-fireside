@@ -405,17 +405,32 @@ public class RssSyncService {
             && "br".equals(element.tagName());
     }
 
+    /**
+     * 取出条目 HTML：description 与 contents（含 content:encoded）都可能有值。
+     * 博客 RSS 常见「description=摘要、contents=全文」——取更长的一份作正文/抽媒体，
+     * 避免只存摘要导致丢全文与配图；瞬间类源通常全文只在一侧，结果不变。
+     */
     private String extractRawHtml(SyndEntry entry) {
-        SyndContent description = entry.getDescription();
-        if (description != null && StringUtils.isNotBlank(description.getValue())) {
-            return description.getValue();
+        String description = null;
+        SyndContent desc = entry.getDescription();
+        if (desc != null && StringUtils.isNotBlank(desc.getValue())) {
+            description = desc.getValue();
         }
-        return entry.getContents().stream()
+        String content = entry.getContents().stream()
             .map(SyndContent::getValue)
             .filter(StringUtils::isNotBlank)
             .findFirst()
             .orElse(null);
+        if (description == null) {
+            return content;
+        }
+        if (content == null) {
+            return description;
+        }
+        // 长度接近时优先 contents（全文槽位）；明显更长的一侧胜出
+        return content.length() >= description.length() ? content : description;
     }
+
 
     /**
      * 提取条目媒体（对齐瞬间的 medium 模型）：
@@ -568,20 +583,58 @@ public class RssSyncService {
         for (int i = 0; i < excess; i++) {
             String name = visible.get(i).getMetadata().getName();
             try {
-                // 删除前取最新版本，避免与其它写入撞乐观锁；失败留给下轮清理
-                client.fetch(FriendMoment.class, name).ifPresent(client::delete);
-                trimmed++;
+                // 删除前取最新版本，避免与其它写入撞乐观锁；失败留给下轮清理。
+                // 仅在确实执行 delete 时计入 trimmed（条目已被并发删掉则不加）
+                var latest = client.fetch(FriendMoment.class, name);
+                if (latest.isPresent()) {
+                    client.delete(latest.get());
+                    trimmed++;
+                }
             } catch (OptimisticLockingFailureException e) {
                 log.debug("[围炉] 清理条目 [{}] 版本冲突，留待下轮", name);
             } catch (Exception e) {
                 log.warn("[围炉] 清理条目 [{}] 失败: {}", name, e.getMessage());
             }
         }
-        long itemCount = all.size() - trimmed;
-        Instant latest = all.isEmpty() ? null
+        // itemCount 只计可见条目（隐藏是去重墓碑，不计入侧边栏「条数」）
+        long itemCount = (long) visible.size() - trimmed;
+        Instant latestPub = all.isEmpty() ? null
             : all.get(all.size() - 1).getSpec().getPubDate();
-        return new TrimResult(trimmed, itemCount, latest);
+        return new TrimResult(trimmed, itemCount, latestPub);
     }
+
+    /**
+     * 友链删除或取消订阅时的级联清理：删该链全部 FriendMoment 与 FeedStatus。
+     * 与同步/清空共用一把锁，避免「同步 create 与级联 delete」交错留下孤儿数据。
+     * 调用方若收到 {@link SyncInProgressException} 应稍后重试。
+     */
+    public void cleanupLinkSubscription(String linkName) {
+        runLocked(() -> {
+            var options = ListOptions.builder()
+                .fieldQuery(equal("spec.linkName", linkName))
+                .build();
+            List<FriendMoment> items =
+                client.listAll(FriendMoment.class, options, Sort.unsorted());
+            for (FriendMoment item : items) {
+                try {
+                    client.delete(item);
+                } catch (Exception e) {
+                    log.warn("[围炉] 级联清理条目 [{}] 失败: {}",
+                        item.getMetadata().getName(), e.getMessage());
+                }
+            }
+            client.fetch(FeedStatus.class, linkName).ifPresent(status -> {
+                try {
+                    client.delete(status);
+                } catch (Exception e) {
+                    log.warn("[围炉] 级联清理同步状态 [{}] 失败: {}", linkName, e.getMessage());
+                }
+            });
+            log.info("[围炉] 友链 [{}] 已删除或取消订阅，级联清理 {} 条动态", linkName, items.size());
+            return null;
+        });
+    }
+
 
     /**
      * 可同步的友链：填写了 RSS 地址且未被标记暂停。
