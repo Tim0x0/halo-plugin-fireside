@@ -568,6 +568,17 @@ onMounted(reload)
         >
           <template v-if="!showHidden" #actions>
             <VButton
+              v-if="selectedLink"
+              v-permission="['plugin:fireside:manage']"
+              type="secondary"
+              :loading="syncingLink"
+              :disabled="mutating || isPaused(selectedLink)"
+              @click="sync(selectedLinkName, false)"
+            >
+              立即同步
+            </VButton>
+            <VButton
+              v-else
               v-permission="['plugin:fireside:manage']"
               type="secondary"
               :loading="syncingAll"
