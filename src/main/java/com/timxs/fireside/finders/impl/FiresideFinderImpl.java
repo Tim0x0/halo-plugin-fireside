@@ -10,6 +10,7 @@ import static run.halo.app.extension.index.query.Queries.or;
 import com.timxs.fireside.FiresideConst;
 import com.timxs.fireside.config.DisplayConfig;
 import com.timxs.fireside.extension.FriendMoment;
+import com.timxs.fireside.richlink.RichLinkEnhancer;
 import com.timxs.fireside.stub.Link;
 import com.timxs.fireside.stub.Moment;
 import com.timxs.fireside.vo.FiresideMomentVo;
@@ -562,9 +563,10 @@ public class FiresideFinderImpl {
                     .originType(media.getOriginType())
                     .build())
                 .toList();
+        // 自身瞬间不写回存储：展示时注入富链接占位，前台再调 link-detail 填封面
         return FiresideMomentVo.ContentVo.builder()
             .raw(StringUtils.defaultString(content.getRaw()))
-            .html(StringUtils.defaultString(content.getHtml()))
+            .html(RichLinkEnhancer.enhance(StringUtils.defaultString(content.getHtml())))
             .medium(medium)
             .build();
     }
@@ -601,6 +603,7 @@ public class FiresideFinderImpl {
         var specVo = FiresideMomentVo.SpecVo.builder()
             .content(FiresideMomentVo.ContentVo.builder()
                 .raw(StringUtils.defaultString(spec.getContentText()))
+                // 富链接占位仅在 RSS 同步入库时写入，读路径不再 enhance（避免每条 Jsoup）
                 .html(injectFriendTag(StringUtils.defaultString(spec.getContentHtml()),
                     friendTag))
                 .medium(medium)

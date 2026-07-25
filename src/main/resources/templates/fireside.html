@@ -4,7 +4,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- 聚合页大量引用友链站点图片，不发 Referer 以绕开对方防盗链 -->
+  <!-- 页面默认不发 Referer；外链图片以 img 的 referrerpolicy 覆盖为 strict-origin-when-cross-origin
+       （跨站只带本站 origin，便于图床按域名白名单放行）；video/audio 无该属性，始终跟随本 meta -->
   <meta name="referrer" content="no-referrer">
   <!-- 防闪烁：首帧前应用配色（访客本地选择 > 站长默认），CSS 据 data-fs-scheme 分档 -->
   <script th:inline="javascript">
@@ -97,6 +98,7 @@
                  th:src="${moment.owner.avatar}"
                  th:alt="${moment.owner.displayName}"
                  loading="lazy"
+                 referrerpolicy="strict-origin-when-cross-origin"
                  onerror="this.hidden=true;this.previousElementSibling.hidden=false">
             <div class="fireside-card-meta">
               <div class="fireside-card-author">
@@ -121,7 +123,8 @@
                th:if="${moment.spec.content.html != null and !moment.spec.content.html.isEmpty()}"
                th:utext="${moment.spec.content.html}">正文内容</div>
 
-          <!-- 媒体区：按 type 渲染图/视频/音频；图片点击交给外部灯箱插件接管 -->
+          <!-- 媒体区：按 type 渲染图/视频/音频；图片点击交给外部灯箱插件接管；
+               video/audio 无 referrerpolicy 属性，Referer 跟随页面 meta 不发 -->
           <div class="fireside-media"
                th:if="${!moment.spec.content.medium.isEmpty()}">
             <th:block th:each="item : ${moment.spec.content.medium}">
@@ -131,18 +134,16 @@
                      th:src="${item.url}"
                      th:alt="${moment.title ?: '图片'}"
                      loading="lazy"
-                     referrerpolicy="no-referrer">
+                     referrerpolicy="strict-origin-when-cross-origin">
                 <video th:if="${item.type != null and item.type.name() == 'VIDEO'}"
                        th:src="${item.url}"
                        controls
                        playsinline
-                       preload="metadata"
-                       referrerpolicy="no-referrer"></video>
+                       preload="metadata"></video>
                 <audio th:if="${item.type != null and item.type.name() == 'AUDIO'}"
                        th:src="${item.url}"
                        controls
-                       preload="metadata"
-                       referrerpolicy="no-referrer"></audio>
+                       preload="metadata"></audio>
               </div>
             </th:block>
           </div>

@@ -38,11 +38,166 @@
       });
       // 纯标签正文（如“#日常”配九图）清理后已无内容：移除容器本身，
       // 让图片网格恢复紧贴头部的负边距规则，与“本无正文”的瞬间渲染一致
+      // 保留富链接占位卡（.fireside-rich-link）
       if (!content.textContent.trim()
-        && !content.querySelector('img,video,audio,iframe')) {
+        && !content.querySelector('img,video,audio,iframe,.fireside-rich-link')) {
         content.remove();
       }
     });
+  }
+
+  /**
+   * 富链接：服务端输出占位壳，前台视口内请求官方
+   * GET /apis/api.hyperlink.halo.run/v1alpha1/link-detail?url=
+   * 填充标题/封面；未装超链接卡片插件或失败时保持占位。
+   */
+  var LINK_DETAIL_API = '/apis/api.hyperlink.halo.run/v1alpha1/link-detail';
+  var richLinkCache = Object.create(null);
+  var richLinkInflight = Object.create(null);
+  var richLinkQueue = [];
+  var richLinkActive = 0;
+  var RICH_LINK_MAX_CONCURRENT = 3;
+
+  function bindRichLinks(root) {
+    var scope = root || document;
+    var nodes = scope.querySelectorAll
+      ? scope.querySelectorAll('[data-rich-link]:not([data-rich-done]):not([data-rich-failed])')
+      : [];
+    if (!nodes.length) {
+      return;
+    }
+    // 无 IntersectionObserver 时直接排队（极老环境）
+    if (typeof IntersectionObserver === 'undefined') {
+      Array.prototype.forEach.call(nodes, function (el) {
+        enqueueRichLink(el);
+      });
+      return;
+    }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) {
+          return;
+        }
+        io.unobserve(entry.target);
+        enqueueRichLink(entry.target);
+      });
+    }, { rootMargin: '120px 0px', threshold: 0.01 });
+    Array.prototype.forEach.call(nodes, function (el) {
+      io.observe(el);
+    });
+  }
+
+  function enqueueRichLink(el) {
+    if (!el || el.getAttribute('data-rich-done') || el.getAttribute('data-rich-failed')) {
+      return;
+    }
+    richLinkQueue.push(el);
+    pumpRichLinkQueue();
+  }
+
+  function pumpRichLinkQueue() {
+    while (richLinkActive < RICH_LINK_MAX_CONCURRENT && richLinkQueue.length) {
+      var el = richLinkQueue.shift();
+      if (!el || el.getAttribute('data-rich-done') || el.getAttribute('data-rich-failed')) {
+        continue;
+      }
+      richLinkActive++;
+      fillRichLink(el).then(function () {
+        richLinkActive--;
+        pumpRichLinkQueue();
+      }, function () {
+        richLinkActive--;
+        pumpRichLinkQueue();
+      });
+    }
+  }
+
+  function fillRichLink(el) {
+    var href = el.getAttribute('data-href') || '';
+    if (!href) {
+      markRichLinkFailed(el);
+      return Promise.resolve();
+    }
+    return fetchLinkDetail(href).then(function (data) {
+      if (!data) {
+        markRichLinkFailed(el);
+        return;
+      }
+      applyLinkDetail(el, data);
+      el.classList.remove('is-loading');
+      el.setAttribute('data-rich-done', '1');
+    }, function () {
+      markRichLinkFailed(el);
+    });
+  }
+
+  function markRichLinkFailed(el) {
+    el.classList.remove('is-loading');
+    el.classList.add('is-failed');
+    el.setAttribute('data-rich-failed', '1');
+  }
+
+  function fetchLinkDetail(href) {
+    if (richLinkCache[href] !== undefined) {
+      return Promise.resolve(richLinkCache[href]);
+    }
+    if (richLinkInflight[href]) {
+      return richLinkInflight[href];
+    }
+    var qs = new URLSearchParams({ url: href });
+    var p = fetch(LINK_DETAIL_API + '?' + qs.toString(), {
+      credentials: 'same-origin',
+      headers: { 'Accept': 'application/json' }
+    }).then(function (res) {
+      if (!res.ok) {
+        richLinkCache[href] = null;
+        return null;
+      }
+      return res.json().then(function (data) {
+        richLinkCache[href] = data;
+        return data;
+      });
+    }).catch(function () {
+      richLinkCache[href] = null;
+      return null;
+    }).then(function (data) {
+      delete richLinkInflight[href];
+      return data;
+    });
+    richLinkInflight[href] = p;
+    return p;
+  }
+
+  function applyLinkDetail(el, data) {
+    var titleEl = el.querySelector('.fireside-rich-link__title');
+    var subEl = el.querySelector('.fireside-rich-link__sub');
+    var cover = el.querySelector('.fireside-rich-link__cover');
+    var title = data.title && String(data.title).trim();
+    var desc = data.description && String(data.description).trim();
+    var image = (data.image && String(data.image).trim())
+      || (data.icon && String(data.icon).trim())
+      || '';
+    var kind = el.getAttribute('data-kind') || '';
+    if (titleEl && title) {
+      titleEl.textContent = title;
+    }
+    // 通用网页卡副标题固定主机名（仿朋友圈来源），不被长 description 盖掉；
+    // 音视频卡仍可用 description 补一句说明
+    if (subEl && desc && kind !== 'link') {
+      subEl.textContent = desc;
+    }
+    if (cover && image && /^https?:\/\//i.test(image)) {
+      var defaultSrc = cover.getAttribute('src');
+      cover.addEventListener('error', function onCoverErr() {
+        cover.removeEventListener('error', onCoverErr);
+        if (defaultSrc) {
+          cover.setAttribute('src', defaultSrc);
+        }
+      }, { once: true });
+      cover.setAttribute('src', image);
+      // 外链封面带本站 origin，便于图床域名白名单；失败回退默认封面
+      cover.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+    }
   }
 
   /** 按 <br> 把段落切成行，删掉只含标签的行；段落清空则整段删除 */
@@ -230,8 +385,47 @@
     }
   });
 
+  /**
+   * 媒体图片加载三态：默认加载中（CSS 灰底）→ is-loaded 去底 → is-failed「加载失败」。
+   * 缓存命中时 img.complete 已为 true，需同步判定，不能只靠 load 事件。
+   */
+  function bindMediaLoading() {
+    var imgs = document.querySelectorAll('.fireside-media-item > img');
+    Array.prototype.forEach.call(imgs, function (img) {
+      var item = img.parentElement;
+      if (!item) {
+        return;
+      }
+      var markLoaded = function () {
+        item.classList.remove('is-failed');
+        item.classList.add('is-loaded');
+      };
+      var markFailed = function () {
+        item.classList.remove('is-loaded');
+        item.classList.add('is-failed');
+        // 裂图仍留在 DOM（供重试扩展），对读屏改成失败语义
+        if (!img.getAttribute('alt') || img.getAttribute('alt') === '图片') {
+          img.setAttribute('alt', '加载失败');
+        }
+      };
+      if (img.complete) {
+        if (img.naturalWidth > 0) {
+          markLoaded();
+        } else {
+          // complete 且无固有尺寸：坏链、空 src，或仍在重试前的失败态
+          markFailed();
+        }
+        return;
+      }
+      img.addEventListener('load', markLoaded, { once: true });
+      img.addEventListener('error', markFailed, { once: true });
+    });
+  }
+
   applyLikedState();
   cleanContentTags();
+  bindMediaLoading();
+  bindRichLinks(document);
 
   // 标签栏：桌面端滚轮转为横向滚动（滚动条已隐藏，移动端触摸原生支持）
   var tagsNav = document.querySelector('.fireside-tags');

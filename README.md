@@ -20,6 +20,7 @@
 - **自动清理**：同一友链内按 `postLink` 去重、每友链保留最新 N 条、友链删除或取消订阅时级联清理；
 - **Console 管理页**：左侧订阅列表（同步状态徽章）+ 动态条目流，支持手动同步（单个/全部）、暂停订阅（不删数据）、隐藏/恢复条目（隐藏后不对外展示且不会被重新抓取）、清空数据；
 - **内置朋友圈页面**：自带 `/fireside` 页面，仿微信朋友圈样式（封面图 + 个人签名 + 时间线列表），每页均为服务端渲染 + 游标分页，自身瞬间支持点赞与评论，登录后可在页面内直接发瞬间（仿朋友圈发表页），支持 `?tag=` 按标签过滤（如 `?tag=友链` 只看朋友），模板可被主题覆盖；
+- **音乐/视频/网页分享卡**：正文中的网易云、QQ 音乐、酷狗、B 站、抖音、YouTube、腾讯视频分享链接渲染为音乐/视频卡，其余独立成段的网页链接渲染为通用分享卡（仿微信朋友圈）；建议安装 [编辑器超链接卡片](https://www.halo.run/store/apps/app-UpUJA) 以自动补全标题与封面（前台调用其 `link-detail`），未安装时显示可点击的占位卡；
 - **公开时间线 API**：匿名 JSON 接口，供主题 JS 或第三方前端自定义加载。
 
 ## 环境要求
@@ -27,6 +28,7 @@
 - Halo `>= 2.25.0`
 - [链接插件 PluginLinks](https://github.com/halo-sigs/plugin-links)（必需）
 - [瞬间插件 PluginMoments](https://github.com/halo-sigs/plugin-moments) `>= 1.16.0`（可选：未安装时时间线只含友链条目）
+- [编辑器超链接卡片](https://github.com/halo-sigs/plugin-editor-hyperlink-card)（可选：为分享卡补全标题与封面；未安装时仅占位壳）
 
 ## 使用
 
@@ -41,7 +43,7 @@
 
 - **首屏服务端渲染**（SSR），每页条数可在设置中调整（默认 20）；分页为游标式"更早的动态"，任意翻页深度成本恒定，无条数上限；
 - 标签导航单行横向滑动（全部 + 各标签含条数，本地标签按条数降序、友链标签固定末位）；
-- 卡片展示：头像、昵称、正文、图片（单图原比例 / 4 图田字格 / 其余三列网格）、时间、标签、友链"查看原文"外链；
+- 卡片展示：头像、昵称、正文、图片（单图原比例 / 4 图田字格 / 其余三列网格）、音乐/视频/网页分享卡（占位 + 可选 `link-detail` 补全）、时间、标签、友链"查看原文"外链；
 - 顶部仿朋友圈封面：封面图与签名在插件设置中配置，昵称与头像取自站点标题和站点 Logo；
 - 自身瞬间支持互动：点赞（走 Halo 计数接口，与主题页点赞记录互通）、评论（官方 `halo:comment` 标签服务端渲染、点击展开，与官方主题瞬间页同款接入；未装「评论组件」插件时优雅降级）、复制详情页链接；友链条目展示"查看原文"外链；
 - 自身瞬间有内置详情页 `/fireside/{name}`（时间戳点入），单条全文 + 点赞 + 评论区默认展开；可见性与瞬间插件原生行为一致（匿名仅见已通过的公开瞬间）；
@@ -121,7 +123,7 @@ GET /apis/api.fireside.timxs.com/v1alpha1/timeline?size=10&tag=&before=
         const img = document.createElement('img');
         img.src = m.owner.avatar;
         img.alt = '';
-        img.referrerPolicy = 'no-referrer';
+        img.referrerPolicy = 'strict-origin-when-cross-origin';
         header.appendChild(img);
       }
       const name = document.createElement('span');
@@ -228,12 +230,34 @@ GET /apis/api.fireside.timxs.com/v1alpha1/timeline?size=10&tag=&before=
 
 `FiresideMomentVo` 字段路径与瞬间插件 `MomentVo` 兼容，另附加：`external`（是否友链条目）、`sourceUrl`（原文链接）、`authorUrl`（作者站点）、`title`（RSS 条目标题，可空）。
 
+### 富链接（音乐 / 视频 / 网页分享卡）
+
+服务端在清洗后的 `content.html` 中把「像分享主链」的链接（块内几乎只有该链接）替换为占位结构（`div.fireside-rich-link`，含默认封面与平台名/主机名），并**固定为正文在上、分享卡在下**（仿微信朋友圈）。内置页 `fireside.js` 在卡片进入视口后请求：
+
+```http
+GET /apis/api.hyperlink.halo.run/v1alpha1/link-detail?url={encodeURIComponent(href)}
+```
+
+（由可选依赖「编辑器超链接卡片」提供，匿名可读。）成功则写入标题/封面；失败或未装插件则保持占位，不影响点击跳转。
+
+| 链接 | 卡片类型 |
+|---|---|
+| 网易云音乐、QQ 音乐、酷狗 | 音乐卡 |
+| B 站、抖音、YouTube、腾讯视频 | 视频卡 |
+| 其余独立成段的 http(s) 链接 | 通用网页卡（副标题显示主机名） |
+
+- **自身瞬间**：Finder 组装展示时注入占位（不写回瞬间存储），刷新围炉页即可。
+- **友链条目**：仅在 RSS **同步入库**时写入占位；列表/公开 API **读路径不再做富链接解析**（避免每条 Jsoup）。
+- 主题若自渲染 `content.html`，可复用类名 `.fireside-rich-link` 或引入围炉静态脚本中的填充逻辑。
+
 ### 已知限制
 
 - 友链条目无详情页：点击"查看原文"跳转至友链站点（自身瞬间的内置详情页为 `/fireside/{name}`）；
 - `stats` 恒为 0：友链条目没有本站点赞/评论数据；
 - `owner.name` 是 linkName：主题若用它拼作者页链接，友链条目的链接无效；
-- 主题接入模式下：主题若用 `metadata.name` 拼 `/moments/{name}` 详情链接，友链条目点入会 404——用 `moment.external` 判断改链 `moment.sourceUrl`。
+- 主题接入模式下：主题若用 `metadata.name` 拼 `/moments/{name}` 详情链接，友链条目点入会 404——用 `moment.external` 判断改链 `moment.sourceUrl`；
+- 富链接真封面依赖可选的「编辑器超链接卡片」；短链（如 `b23.tv`）不解析跳转，仅识别平台；句中内联链接不会升级为大卡；
+- 友链富链接占位在同步入库时写入，不随页面阅读重算。
 
 ## 开发
 

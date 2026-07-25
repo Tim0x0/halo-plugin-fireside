@@ -10,7 +10,8 @@ metadata:
     # 链接管理：https://www.halo.run/store/apps/app-hfbQg
     "store.halo.run/required-apps": '["app-hfbQg"]'
     # 瞬间：https://www.halo.run/store/apps/app-SnwWD
-    "store.halo.run/recommended-apps": '["app-SnwWD"]'
+    # 编辑器超链接卡片（富链接封面/标题）：https://www.halo.run/store/apps/app-UpUJA
+    "store.halo.run/recommended-apps": '["app-SnwWD", "app-UpUJA"]'
 spec:
   enabled: true
   requires: ">=2.25.0"
@@ -35,3 +36,5 @@ spec:
     # 1.16.0 起瞬间迁移到 Halo 2.22 的 typed 索引 API，本插件的查询按该形态编写，
     # 旧版瞬间的 String 索引与 Boolean 查询值不匹配会导致查询失败，故要求 >=1.16.0
     "PluginMoments?": ">=1.16.0"
+    # 可选：前台富链接向其 link-detail 拉标题/封面；未装则仅显示占位壳
+    "editor-hyperlink-card?": ">=1.0.0"

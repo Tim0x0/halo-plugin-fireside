@@ -273,6 +273,76 @@ body {
 .fireside-card-content iframe {
   max-width: 100%;
 }
+/* ===== 富链接卡片（仿朋友圈音乐/视频分享；真封面由 JS 调 link-detail 填充） ===== */
+.fireside-rich-link {
+  margin: 8px 0;
+  max-width: 100%;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #f7f7f7;
+}
+.fireside-rich-link__anchor {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  text-decoration: none;
+  color: inherit;
+  min-width: 0;
+}
+.fireside-rich-link__cover {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  border-radius: 2px;
+  object-fit: cover;
+  background: #ebebeb;
+}
+.fireside-rich-link__meta {
+  flex: 1;
+  min-width: 0;
+}
+.fireside-rich-link__title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: #191919;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fireside-rich-link__sub {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.3;
+  color: #888;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fireside-rich-link__badge {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-right: 2px;
+  opacity: 0.45;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 16px 16px;
+}
+/* 音乐：音符；视频：小三角；通用：链接环 */
+.fireside-rich-link--music .fireside-rich-link__badge {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23666'%3E%3Cpath d='M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z'/%3E%3C/svg%3E");
+}
+.fireside-rich-link--video .fireside-rich-link__badge {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23666'%3E%3Cpath d='M8 5v14l11-7L8 5z'/%3E%3C/svg%3E");
+}
+.fireside-rich-link--link .fireside-rich-link__badge {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71'/%3E%3Cpath d='M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71'/%3E%3C/svg%3E");
+}
+.fireside-rich-link.is-loading .fireside-rich-link__cover {
+  opacity: 0.85;
+}
 /* 正文内嵌标签由 fireside.js 清理（独立成段删除、混排保词去链）；
    此规则仅作无 JS 环境的兜底隐藏 */
 .fireside-card-content a.tag {
@@ -307,13 +377,55 @@ body {
   text-decoration: none;
   line-height: 0;
 }
-/* 单图：保持原比例，容器收缩到图片实际宽度（不露底色） */
+/* 图片加载三态（挂在 .fireside-media-item 上）：
+   默认加载中灰底 → .is-loaded 去底只留真图 → .is-failed 显示「加载失败」 */
+.fireside-media-item:has(> img) {
+  position: relative;
+  background: #f5f5f5;
+}
+.fireside-media-item.is-loaded {
+  background: transparent;
+}
+.fireside-media-item.is-failed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 单图失败时 img 已 absolute 脱流，需自带宽高，避免 fit-content 塌成 0 */
+  width: 100%;
+  /* 失败态与加载占位同高（4:3 比例） */
+  aspect-ratio: 4 / 3;
+  max-height: 300px;
+  background: #f5f5f5;
+}
+/* 藏掉裂图图标，避免与失败文案叠在一起 */
+.fireside-media-item.is-failed > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+}
+.fireside-media-item.is-failed::after {
+  /* 用 \XXXX 转义，避免 CSS 被按非 UTF-8 解析时 content 中文乱码 */
+  content: "\52A0\8F7D\5931\8D25"; /* 加载失败 */
+  font-size: 13px;
+  line-height: 1.4;
+  color: #b2b2b2;
+}
+/* 单图：保持原比例；加载中先给最小高度让灰底可见，成功后收拢到图片宽 */
 .fireside-media:not(:has(.fireside-media-item:nth-child(2))) {
   display: block;
   max-width: 240px;
 }
 .fireside-media-single {
   width: fit-content;
+}
+.fireside-media-single:has(> img):not(.is-loaded):not(.is-failed) {
+  width: 100%;
+  /* 加载占位：固定 4:3 比例，避免布局抖动；上限与最终 max-height 一致 */
+  aspect-ratio: 4 / 3;
+  max-height: 300px;
 }
 .fireside-media-single img,
 .fireside-media-single video {
@@ -327,17 +439,22 @@ body {
   max-width: 280px;
   margin: 4px 0;
 }
-/* 多图：正方形缩略图；加载占位色放在 img 上，加载完成即被图片覆盖 */
+/* 多图：正方形缩略图；加载灰底由 item 承担，成功后 is-loaded 去掉 */
 .fireside-media-grid {
   width: 100%;
   aspect-ratio: 1;
+}
+/* 多图失败：保持 1:1，覆盖通用 .is-failed 的单图 4:3，避免格子变矮 */
+.fireside-media-grid.is-failed {
+  aspect-ratio: 1;
+  max-height: none;
+  min-height: 0;
 }
 .fireside-media-grid img,
 .fireside-media-grid video {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  background: #f5f5f5;
 }
 .fireside-media-grid audio {
   width: 100%;
@@ -1112,13 +1229,33 @@ body.fireside-dragging {
   html:not([data-fs-scheme="light"]) .fireside-card-content {
     color: #d5d5d5;
   }
+  html:not([data-fs-scheme="light"]) .fireside-rich-link {
+    background: #1e1e1e;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-rich-link__cover {
+    background: #2a2a2a;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-rich-link__title {
+    color: #e8e8e8;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-rich-link__sub {
+    color: #8a8a8a;
+  }
   html:not([data-fs-scheme="light"]) .fireside-inline-tag {
     background: #1e1e1e;
     color: #8a8a8a;
   }
-  html:not([data-fs-scheme="light"]) .fireside-media-grid img,
-  html:not([data-fs-scheme="light"]) .fireside-media-grid video {
+  html:not([data-fs-scheme="light"]) .fireside-media-item:has(> img) {
     background: #1e1e1e;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-media-item.is-loaded {
+    background: transparent;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-media-item.is-failed {
+    background: #1e1e1e;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-media-item.is-failed::after {
+    color: #6e6e6e;
   }
   html:not([data-fs-scheme="light"]) .fireside-card-time {
     color: #6e6e6e;
@@ -1314,13 +1451,33 @@ html[data-fs-scheme="dark"] .fireside-badge {
 html[data-fs-scheme="dark"] .fireside-card-content {
   color: #d5d5d5;
 }
+html[data-fs-scheme="dark"] .fireside-rich-link {
+  background: #1e1e1e;
+}
+html[data-fs-scheme="dark"] .fireside-rich-link__cover {
+  background: #2a2a2a;
+}
+html[data-fs-scheme="dark"] .fireside-rich-link__title {
+  color: #e8e8e8;
+}
+html[data-fs-scheme="dark"] .fireside-rich-link__sub {
+  color: #8a8a8a;
+}
 html[data-fs-scheme="dark"] .fireside-inline-tag {
   background: #1e1e1e;
   color: #8a8a8a;
 }
-html[data-fs-scheme="dark"] .fireside-media-grid img,
-html[data-fs-scheme="dark"] .fireside-media-grid video {
+html[data-fs-scheme="dark"] .fireside-media-item:has(> img) {
   background: #1e1e1e;
+}
+html[data-fs-scheme="dark"] .fireside-media-item.is-loaded {
+  background: transparent;
+}
+html[data-fs-scheme="dark"] .fireside-media-item.is-failed {
+  background: #1e1e1e;
+}
+html[data-fs-scheme="dark"] .fireside-media-item.is-failed::after {
+  color: #6e6e6e;
 }
 html[data-fs-scheme="dark"] .fireside-card-time {
   color: #6e6e6e;

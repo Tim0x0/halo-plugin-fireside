@@ -1,6 +1,16 @@
 <script lang="ts" setup>
 import { axiosInstance } from '@halo-dev/api-client'
-import { Dialog, Toast, VButton, VEmpty, VLoading, VPageHeader, VSpace } from '@halo-dev/components'
+import {
+  Dialog,
+  Toast,
+  VButton,
+  VCard,
+  VEmpty,
+  VLoading,
+  VPageHeader,
+  VPagination,
+  VSpace,
+} from '@halo-dev/components'
 import { utils } from '@halo-dev/ui-shared'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -25,8 +35,6 @@ import {
   type SyncResponse,
 } from '@/types'
 
-const PAGE_SIZE = 20
-
 const router = useRouter()
 
 const links = ref<Link[]>([])
@@ -34,6 +42,7 @@ const statuses = ref<Map<string, FeedStatus>>(new Map())
 const moments = ref<FriendMoment[]>([])
 const total = ref(0)
 const page = ref(1)
+const size = ref(20)
 const selectedLinkName = ref<string>('')
 const showHidden = ref(false)
 
@@ -50,8 +59,6 @@ let momentsRequestSeq = 0
 
 // 同步与清空互斥：清空会重置计数，与同步并发会产生错乱结果（后端 409 兜底，这里前置禁用）
 const mutating = computed(() => syncingAll.value || syncingLink.value || clearing.value)
-
-const totalPages = computed(() => Math.max(Math.ceil(total.value / PAGE_SIZE), 1))
 
 // Halo 删除是先打标记异步真删，过滤掉删除中的条目避免闪现
 const visibleMoments = computed(() =>
@@ -195,7 +202,7 @@ async function fetchMoments() {
     // 逗号拼接会被当成单个值解析导致 500
     const query = new URLSearchParams()
     query.append('page', String(page.value))
-    query.append('size', String(PAGE_SIZE))
+    query.append('size', String(size.value))
     query.append('sort', 'spec.pubDate,desc')
     query.append('fieldSelector', `spec.hidden=${showHidden.value}`)
     if (selectedLinkName.value) {
@@ -212,7 +219,7 @@ async function fetchMoments() {
     total.value = data.total
     // 页码超界（如隐藏/删除掉当前页最后一条后）时回退到最后一个有效页重取，
     // 否则用户停在空页且分页控件可能因 total 缩小而消失
-    const maxPage = Math.max(Math.ceil(data.total / PAGE_SIZE), 1)
+    const maxPage = Math.max(Math.ceil(data.total / size.value), 1)
     if (page.value > maxPage) {
       page.value = maxPage
       return fetchMoments()
@@ -247,15 +254,8 @@ function selectTab(hidden: boolean) {
   fetchMoments()
 }
 
-function prevPage() {
-  if (page.value <= 1) return
-  page.value -= 1
-  fetchMoments()
-}
-
-function nextPage() {
-  if (page.value >= totalPages.value) return
-  page.value += 1
+/** 官方 VPagination 的 change：page/size 已由 v-model 写回，这里只负责拉数 */
+function onPaginationChange() {
   fetchMoments()
 }
 
@@ -486,7 +486,8 @@ onMounted(reload)
                 class="fs-source__logo"
                 :src="link.spec.logo"
                 alt=""
-                referrerpolicy="no-referrer"
+                loading="lazy"
+                referrerpolicy="strict-origin-when-cross-origin"
               />
               <span v-else class="fs-source__icon">
                 <RiRssLine />
@@ -620,111 +621,118 @@ onMounted(reload)
           </div>
         </div>
 
-        <VLoading v-if="loadingList && !visibleMoments.length" />
-        <VEmpty
-          v-else-if="!visibleMoments.length"
-          :title="showHidden ? '没有已隐藏的动态' : '暂无友链动态'"
-          :message="
-            showHidden
-              ? '在「全部」列表中隐藏的条目会出现在这里'
-              : selectedLink && isPaused(selectedLink)
-                ? '该订阅已暂停同步，恢复后再同步即可抓取最新动态'
-                : '填写友链的动态 RSS 地址后，等待定时同步或点击同步按钮'
-          "
-        >
-          <template v-if="!showHidden" #actions>
-            <VButton
-              v-if="selectedLink"
-              v-permission="['plugin:fireside:manage']"
-              type="secondary"
-              :loading="syncingLink"
-              :disabled="mutating || isPaused(selectedLink)"
-              @click="sync(selectedLinkName, false)"
-            >
-              立即同步
-            </VButton>
-            <VButton
-              v-else
-              v-permission="['plugin:fireside:manage']"
-              type="secondary"
-              :loading="syncingAll"
-              :disabled="!links.length || mutating"
-              @click="sync('-', true)"
-            >
-              立即同步
-            </VButton>
-          </template>
-        </VEmpty>
-        <ul v-else class="fs-list">
-          <li v-for="moment in visibleMoments" :key="moment.metadata.name" class="fs-item">
-            <!-- 头像仅在「全部动态」混排时显示，选中单个友链后来源已明确、行更紧凑 -->
-            <template v-if="!selectedLinkName">
-              <img
-                v-if="moment.spec.logo"
-                class="fs-item__avatar"
-                :src="moment.spec.logo"
-                alt=""
-                referrerpolicy="no-referrer"
-              />
-              <div v-else class="fs-item__avatar fs-item__avatar--placeholder">
-                {{ (moment.spec.author || '?').slice(0, 1) }}
-              </div>
-            </template>
-            <div class="fs-item__body">
-              <div class="fs-item__head">
-                <span class="fs-item__author">{{ moment.spec.author }}</span>
-                <span class="fs-item__time">{{ formatDate(moment.spec.pubDate) }}</span>
-              </div>
-              <div v-if="moment.spec.title" class="fs-item__title">
-                {{ moment.spec.title }}
-              </div>
-              <p v-if="moment.spec.contentText" class="fs-item__text">
-                {{ moment.spec.contentText }}
-              </p>
-              <div v-if="photosOf(moment).length" class="fs-item__images">
-                <img
-                  v-for="img in photosOf(moment).slice(0, 9)"
-                  :key="img"
-                  :src="img"
-                  alt=""
-                  referrerpolicy="no-referrer"
-                  loading="lazy"
-                />
-              </div>
-            </div>
-            <div class="fs-item__actions">
-              <a
-                class="fs-item__action"
-                :href="moment.spec.postLink"
-                target="_blank"
-                rel="noreferrer"
-                title="查看原文"
-              >
-                <RiExternalLinkLine />
-              </a>
-              <button
+        <!-- 列表区对齐官方：VCard body 放内容，footer 放 VPagination（顶部分割线 + 12/16 内边距） -->
+        <VCard :body-class="['!p-0']">
+          <VLoading v-if="loadingList && !visibleMoments.length" />
+          <VEmpty
+            v-else-if="!visibleMoments.length"
+            :title="showHidden ? '没有已隐藏的动态' : '暂无友链动态'"
+            :message="
+              showHidden
+                ? '在「全部」列表中隐藏的条目会出现在这里'
+                : selectedLink && isPaused(selectedLink)
+                  ? '该订阅已暂停同步，恢复后再同步即可抓取最新动态'
+                  : '填写友链的动态 RSS 地址后，等待定时同步或点击同步按钮'
+            "
+          >
+            <template v-if="!showHidden" #actions>
+              <VButton
+                v-if="selectedLink"
                 v-permission="['plugin:fireside:manage']"
-                type="button"
-                class="fs-item__action"
-                :title="showHidden ? '恢复展示' : '隐藏（不再对外展示，也不会重新抓取）'"
-                @click="toggleHidden(moment)"
+                type="secondary"
+                :loading="syncingLink"
+                :disabled="mutating || isPaused(selectedLink)"
+                @click="sync(selectedLinkName, false)"
               >
-                <RiEyeLine v-if="showHidden" />
-                <RiEyeOffLine v-else />
-              </button>
-            </div>
-          </li>
-        </ul>
+                立即同步
+              </VButton>
+              <VButton
+                v-else
+                v-permission="['plugin:fireside:manage']"
+                type="secondary"
+                :loading="syncingAll"
+                :disabled="!links.length || mutating"
+                @click="sync('-', true)"
+              >
+                立即同步
+              </VButton>
+            </template>
+          </VEmpty>
+          <ul v-else class="fs-list">
+            <li v-for="moment in visibleMoments" :key="moment.metadata.name" class="fs-item">
+              <!-- 头像仅在「全部动态」混排时显示，选中单个友链后来源已明确、行更紧凑 -->
+              <template v-if="!selectedLinkName">
+                <img
+                  v-if="moment.spec.logo"
+                  class="fs-item__avatar"
+                  :src="moment.spec.logo"
+                  alt=""
+                  loading="lazy"
+                  referrerpolicy="strict-origin-when-cross-origin"
+                />
+                <div v-else class="fs-item__avatar fs-item__avatar--placeholder">
+                  {{ (moment.spec.author || '?').slice(0, 1) }}
+                </div>
+              </template>
+              <div class="fs-item__body">
+                <div class="fs-item__head">
+                  <span class="fs-item__author">{{ moment.spec.author }}</span>
+                  <span class="fs-item__time">{{ formatDate(moment.spec.pubDate) }}</span>
+                </div>
+                <div v-if="moment.spec.title" class="fs-item__title">
+                  {{ moment.spec.title }}
+                </div>
+                <p v-if="moment.spec.contentText" class="fs-item__text">
+                  {{ moment.spec.contentText }}
+                </p>
+                <div v-if="photosOf(moment).length" class="fs-item__images">
+                  <img
+                    v-for="img in photosOf(moment).slice(0, 9)"
+                    :key="img"
+                    :src="img"
+                    alt=""
+                    referrerpolicy="strict-origin-when-cross-origin"
+                    loading="lazy"
+                  />
+                </div>
+              </div>
+              <div class="fs-item__actions">
+                <a
+                  class="fs-item__action"
+                  :href="moment.spec.postLink"
+                  target="_blank"
+                  rel="noreferrer"
+                  title="查看原文"
+                >
+                  <RiExternalLinkLine />
+                </a>
+                <button
+                  v-permission="['plugin:fireside:manage']"
+                  type="button"
+                  class="fs-item__action"
+                  :title="showHidden ? '恢复展示' : '隐藏（不再对外展示，也不会重新抓取）'"
+                  @click="toggleHidden(moment)"
+                >
+                  <RiEyeLine v-if="showHidden" />
+                  <RiEyeOffLine v-else />
+                </button>
+              </div>
+            </li>
+          </ul>
 
-        <div v-if="total > PAGE_SIZE" class="fs-pagination">
-          <VButton size="sm" :disabled="page <= 1 || loadingList" @click="prevPage">上一页</VButton>
-          <span class="fs-pagination__info">
-            第 {{ page }} / {{ totalPages }} 页 · 共 {{ total }} 条
-          </span>
-          <VButton size="sm" :disabled="page >= totalPages || loadingList" @click="nextPage">
-            下一页
-          </VButton>
-        </div>
+          <template #footer>
+            <VPagination
+              v-model:page="page"
+              v-model:size="size"
+              :total="total"
+              :size-options="[20, 30, 50, 100]"
+              page-label="页"
+              size-label="条 / 页"
+              :total-label="`共 ${total} 条`"
+              @change="onPaginationChange"
+            />
+          </template>
+        </VCard>
       </div>
     </div>
   </div>
@@ -1093,16 +1101,11 @@ onMounted(reload)
   justify-content: flex-end;
 }
 
-/* ── 条目流 ─────────────────────────────── */
+/* ── 条目流：外框交给 VCard，这里只负责行列表本身 ── */
 .fs-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--fs-border);
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: var(--fs-shadow);
 }
 
 .fs-item {
@@ -1239,18 +1242,4 @@ onMounted(reload)
   color: var(--fs-text);
 }
 
-/* ── 分页 ─────────────────────────────── */
-.fs-pagination {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.75rem;
-  margin-top: 0.75rem;
-}
-
-.fs-pagination__info {
-  font-size: 0.8125rem;
-  color: var(--fs-text-muted);
-  font-variant-numeric: tabular-nums;
-}
 </style>

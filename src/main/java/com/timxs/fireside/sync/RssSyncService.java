@@ -11,6 +11,7 @@ import com.timxs.fireside.FiresideConst;
 import com.timxs.fireside.config.SyncConfig;
 import com.timxs.fireside.extension.FeedStatus;
 import com.timxs.fireside.extension.FriendMoment;
+import com.timxs.fireside.richlink.RichLinkEnhancer;
 import com.timxs.fireside.stub.Link;
 import java.net.URI;
 import java.time.Duration;
@@ -360,6 +361,9 @@ public class RssSyncService {
         List<FriendMoment.MediaItem> media = extractMedia(entry, doc, baseUri);
         String contentHtml = doc == null ? ""
             : Jsoup.clean(doc.body().html(), postLink, Safelist.basic());
+        // 富链接占位须在 basic() 之后注入（basic 会剥掉自定义 div/data-*）；
+        // 真封面由前台调官方 link-detail 填充
+        contentHtml = RichLinkEnhancer.enhance(contentHtml);
         String contentText = doc == null ? ""
             : StringUtils.abbreviate(doc.text(), CONTENT_TEXT_MAX_LENGTH);
 
