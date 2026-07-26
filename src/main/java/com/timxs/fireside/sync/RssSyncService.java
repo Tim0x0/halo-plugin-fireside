@@ -16,15 +16,17 @@ import com.timxs.fireside.stub.Link;
 import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -67,6 +69,35 @@ public class RssSyncService {
     private static final Pattern MACHINE_TITLE =
         Pattern.compile(".+ published on \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$");
 
+    /**
+     * 短代码语法：open 匹配起始/自闭合标记，close 匹配闭合标记，两者的捕获组 1 都是标记名。
+     */
+    private record ShortcodeSyntax(Pattern open, Pattern close) {
+    }
+
+    /**
+     * 各博客系统的主题短代码只在对方前台渲染，RSS 里是原样文本（如 Typecho 的
+     * {cat_gallery}...{/cat_gallery}），入库前需要剥掉。仅当同名起始+闭合标记在正文中
+     * 成对出现才删除——孤立的 {config}、[转载] 这类普通文本不会被误伤。
+     */
+    private static final List<ShortcodeSyntax> SHORTCODE_SYNTAXES = List.of(
+        // Typecho 花括号：{cat_gallery} ... {/cat_gallery}
+        new ShortcodeSyntax(
+            Pattern.compile("\\{([A-Za-z][\\w-]*)(?:\\s[^{}]*)?}"),
+            Pattern.compile("\\{/([A-Za-z][\\w-]*)}")),
+        // Hugo：{{< gallery >}} ... {{< /gallery >}}
+        new ShortcodeSyntax(
+            Pattern.compile("\\{\\{<\\s*([A-Za-z][\\w-]*)[^>]*>}}"),
+            Pattern.compile("\\{\\{<\\s*/([A-Za-z][\\w-]*)\\s*>}}")),
+        // Hexo/Jekyll 的 Liquid 标记：{% codeblock %} ... {% endcodeblock %}
+        new ShortcodeSyntax(
+            Pattern.compile("\\{%\\s*([A-Za-z][\\w-]*)[^%}]*%}"),
+            Pattern.compile("\\{%\\s*end([A-Za-z][\\w-]*)\\s*%}")),
+        // WordPress/BBCode 方括号：[caption] ... [/caption]
+        new ShortcodeSyntax(
+            Pattern.compile("\\[([A-Za-z][\\w-]*)(?:\\s[^\\[\\]]*)?]"),
+            Pattern.compile("\\[/([A-Za-z][\\w-]*)]")));
+
     private final ExtensionClient client;
     private final FeedFetcher feedFetcher;
 
@@ -77,7 +108,10 @@ public class RssSyncService {
 
     /**
      * 防重叠：定时轮与手动触发不并发执行（并发同步同一友链会造成重复入库竞态）；
-     * 清空动态也共用此锁，FriendMoment 与 FeedStatus 的写入天然串行、单一写入方。
+     * 清空动态也共用此锁，本服务内的 FriendMoment 与 FeedStatus 写入天然串行。
+     * 注意 FeedStatus 并非严格单写方：Console 隐藏/恢复条目时会直接 PUT 回写
+     * itemCount（±1），与本服务并发时由乐观锁兜底，最坏是计数短暂偏差，
+     * 下轮同步 trimToRetain 重算修正。
      */
     private final ReentrantLock syncLock = new ReentrantLock();
 
@@ -204,6 +238,13 @@ public class RssSyncService {
         }
     }
 
+    /**
+     * 是否有同步/清空/级联清理正在持锁执行（LinkReconciler 免锁捷径的判定依据）。
+     */
+    public boolean isSyncing() {
+        return syncLock.isLocked();
+    }
+
     private List<LinkSyncResult> syncBatch(List<Link> batch, SyncConfig config) {
         // 串行逐链同步：友链之间无并发，exists→create 天然原子（不同友链的 feed
         // 携带同一 postLink 也不会重复入库）；单链耗时已由 FeedFetcher 的总预算封顶，
@@ -235,15 +276,14 @@ public class RssSyncService {
         try {
             SyndFeed feed = feedFetcher.fetch(rssUrl, config.effectiveTimeoutSeconds());
             int retain = config.effectiveRetainPerLink();
+            // 发布时间在过滤前一次性解出（datedEntries），排序比较器全程一致；
             // 先按发布时间取最新 retain 条，再做重量级映射（jsoup 解析/清洗）——
             // 超出保留窗口的条目注定被清理，避免"解析几百条只留 20 条"的白费功
             // 与"新增 74 条又删 54 条"的写放大
-            List<FriendMoment.FriendMomentSpec> specs = feed.getEntries().stream()
-                .filter(entry -> StringUtils.isNotBlank(entry.getLink())
-                    || StringUtils.isNotBlank(entry.getUri()))
-                .sorted(Comparator.comparing(this::resolvePubDate, Comparator.reverseOrder()))
+            List<FriendMoment.FriendMomentSpec> specs = datedEntries(feed, fetchedAt).stream()
+                .sorted(Comparator.comparing(DatedEntry::pubDate, Comparator.reverseOrder()))
                 .limit(retain)
-                .map(entry -> mapEntry(entry, feed, rssUrl, link))
+                .map(dated -> mapEntry(dated.entry(), feed, rssUrl, link, dated.pubDate()))
                 .filter(Objects::nonNull)
                 .toList();
             int created = 0;
@@ -274,7 +314,8 @@ public class RssSyncService {
 
     /**
      * 同步状态回写：成功清空错误并归零失败计数，失败保留上次成功信息并累加计数。
-     * FeedStatus 的写入方只有本服务（同步/清空共用一把锁，天然串行），无并发冲突场景；
+     * 服务内同步/清空共用一把锁、写入串行；Console 隐藏/恢复会并发 PUT itemCount，
+     * 撞乐观锁时本次回写失败仅记 warn，itemCount 由下轮同步重算，不会漂移；
      * 回写失败不影响同步结果本身。
      */
     private void upsertFeedStatus(String linkName, String rssUrl, Instant fetchedAt, String error,
@@ -321,9 +362,10 @@ public class RssSyncService {
 
     /**
      * 把 RSS 条目映射为 FriendMomentSpec；缺少可用链接（去重键）时返回 null 跳过。
+     * pubDate 由调用方一次性解出后传入（{@link #resolvePubDate}）。
      */
     private FriendMoment.FriendMomentSpec mapEntry(SyndEntry entry, SyndFeed feed,
-        String feedUrl, Link link) {
+        String feedUrl, Link link, Instant pubDate) {
         String siteBase = resolveAbsolute(feedUrl, feed.getLink());
         String postLink = resolveAbsolute(feedUrl, entry.getLink());
         if (postLink == null) {
@@ -347,7 +389,16 @@ public class RssSyncService {
                     tagLink.remove();
                 }
             }
-            // 清理删除标签后残留的段首/段尾 <br> 与空白（否则 prose 排版下呈现为大段空行），
+            stripShortcodes(doc);
+        }
+        // 媒体（图/视频/音频）从正文 DOM 与 enclosure 附件提取，对齐瞬间的 medium 模型；
+        // 正文清洗用不含媒体标签的 Safelist.basic()——否则主题会在正文和九宫格各渲染一次
+        List<FriendMoment.MediaItem> media = extractMedia(entry, doc, baseUri);
+        if (doc != null) {
+            // 已提取进九宫格的媒体标签从 DOM 移除（basic() 反正会剥掉它们）——
+            // 这样短代码/标签链接删除后只剩 <br> 的段落才能被下面的清理收掉
+            doc.select("img, video, audio").remove();
+            // 清理删除节点后残留的段首/段尾 <br> 与空白（否则 prose 排版下呈现为大段空行），
             // 以及由此变空的段落
             for (var block : doc.select("p, div")) {
                 trimEdgeBreaks(block);
@@ -356,9 +407,6 @@ public class RssSyncService {
                 }
             }
         }
-        // 媒体（图/视频/音频）从正文 DOM 与 enclosure 附件提取，对齐瞬间的 medium 模型；
-        // 正文清洗用不含媒体标签的 Safelist.basic()——否则主题会在正文和九宫格各渲染一次
-        List<FriendMoment.MediaItem> media = extractMedia(entry, doc, baseUri);
         String contentHtml = doc == null ? ""
             : Jsoup.clean(doc.body().html(), postLink, Safelist.basic());
         // 富链接占位须在 basic() 之后注入（basic 会剥掉自定义 div/data-*）；
@@ -384,8 +432,81 @@ public class RssSyncService {
         spec.setContentHtml(contentHtml);
         spec.setContentText(contentText);
         spec.setMedia(media);
-        spec.setPubDate(resolvePubDate(entry));
+        spec.setPubDate(pubDate);
         return spec;
+    }
+
+    /**
+     * 删除正文中成对出现的短代码标记（见 {@link #SHORTCODE_SYNTAXES}）。
+     * code/pre 内的文本不参与配对统计也不删除——正文里贴的代码片段不会被误伤；
+     * 剥掉标记后残留的空白/空段落由调用方的 trimEdgeBreaks 清理收尾。
+     * 包内可见以便单测。
+     */
+    static void stripShortcodes(Document doc) {
+        var textNodes = new ArrayList<TextNode>();
+        collectTextNodes(doc.body(), textNodes);
+        if (textNodes.isEmpty()) {
+            return;
+        }
+        for (ShortcodeSyntax syntax : SHORTCODE_SYNTAXES) {
+            var openNames = new HashSet<String>();
+            var closeNames = new HashSet<String>();
+            for (TextNode node : textNodes) {
+                collectNames(syntax.open(), node.getWholeText(), openNames);
+                collectNames(syntax.close(), node.getWholeText(), closeNames);
+            }
+            openNames.retainAll(closeNames);
+            if (openNames.isEmpty()) {
+                continue;
+            }
+            for (TextNode node : textNodes) {
+                String text = node.getWholeText();
+                String stripped = removeMatched(syntax.close(), openNames,
+                    removeMatched(syntax.open(), openNames, text));
+                if (!stripped.equals(text)) {
+                    node.text(stripped);
+                }
+            }
+        }
+    }
+
+    /**
+     * 深度优先收集文本节点，整棵跳过 code/pre 子树。
+     */
+    private static void collectTextNodes(Node node, List<TextNode> result) {
+        if (node instanceof Element element
+            && ("code".equals(element.tagName()) || "pre".equals(element.tagName()))) {
+            return;
+        }
+        for (int i = 0; i < node.childNodeSize(); i++) {
+            Node child = node.childNode(i);
+            if (child instanceof TextNode textNode) {
+                result.add(textNode);
+            } else {
+                collectTextNodes(child, result);
+            }
+        }
+    }
+
+    private static void collectNames(Pattern pattern, String text, Set<String> names) {
+        Matcher matcher = pattern.matcher(text);
+        while (matcher.find()) {
+            names.add(matcher.group(1));
+        }
+    }
+
+    /**
+     * 删除文本中标记名在配对集合内的短代码标记，其余原样保留。
+     */
+    private static String removeMatched(Pattern pattern, Set<String> pairedNames, String text) {
+        Matcher matcher = pattern.matcher(text);
+        var sb = new StringBuilder();
+        while (matcher.find()) {
+            matcher.appendReplacement(sb, pairedNames.contains(matcher.group(1))
+                ? "" : Matcher.quoteReplacement(matcher.group()));
+        }
+        matcher.appendTail(sb);
+        return sb.toString();
     }
 
     /**
@@ -518,19 +639,43 @@ public class RssSyncService {
     }
 
     /**
-     * 发布时间回退链：publishedDate → updatedDate → 抓取时刻；
-     * 超过容差的未来时间钳制为抓取时刻，防止霸占时间线顶部。
+     * 条目与其解析后发布时间的配对：时间只解析一次，排序与入库共用。
      */
-    private Instant resolvePubDate(SyndEntry entry) {
+    private record DatedEntry(SyndEntry entry, Instant pubDate) {
+    }
+
+    /**
+     * 过滤掉没有可用链接（去重键）的条目，并按 feed 位次为每条解出发布时间。
+     */
+    private static List<DatedEntry> datedEntries(SyndFeed feed, Instant fetchedAt) {
+        List<SyndEntry> entries = feed.getEntries();
+        var dated = new ArrayList<DatedEntry>(entries.size());
+        for (int i = 0; i < entries.size(); i++) {
+            SyndEntry entry = entries.get(i);
+            if (StringUtils.isBlank(entry.getLink()) && StringUtils.isBlank(entry.getUri())) {
+                continue;
+            }
+            dated.add(new DatedEntry(entry, resolvePubDate(entry, fetchedAt, i)));
+        }
+        return dated;
+    }
+
+    /**
+     * 发布时间回退链：publishedDate → updatedDate → 按 feed 位次从抓取时刻逐毫秒递减；
+     * 超过容差的未来时间同样按位次钳制，防止霸占时间线顶部。
+     * 无日期条目不共享同一时间戳——游标分页对同刻并列的兜底窗口只有 2*size 条，
+     * 整源同刻会让更早的并列条目永远翻不到；逐毫秒递减既消除并列，
+     * 又保留 feed 原始顺序（靠前的条目视为更新）。包内可见以便单测。
+     */
+    static Instant resolvePubDate(SyndEntry entry, Instant fetchedAt, int feedIndex) {
         var date = entry.getPublishedDate() != null
             ? entry.getPublishedDate() : entry.getUpdatedDate();
-        Instant now = Instant.now();
         if (date == null) {
-            return now.truncatedTo(ChronoUnit.SECONDS);
+            return fetchedAt.minusMillis(feedIndex);
         }
         Instant pubDate = date.toInstant();
-        if (pubDate.isAfter(now.plus(FUTURE_TOLERANCE))) {
-            return now.truncatedTo(ChronoUnit.SECONDS);
+        if (pubDate.isAfter(fetchedAt.plus(FUTURE_TOLERANCE))) {
+            return fetchedAt.minusMillis(feedIndex);
         }
         return pubDate;
     }
@@ -627,14 +772,21 @@ public class RssSyncService {
                         item.getMetadata().getName(), e.getMessage());
                 }
             }
-            client.fetch(FeedStatus.class, linkName).ifPresent(status -> {
+            var status = client.fetch(FeedStatus.class, linkName);
+            status.ifPresent(fs -> {
                 try {
-                    client.delete(status);
+                    client.delete(fs);
                 } catch (Exception e) {
                     log.warn("[围炉] 级联清理同步状态 [{}] 失败: {}", linkName, e.getMessage());
                 }
             });
-            log.info("[围炉] 友链 [{}] 已删除或取消订阅，级联清理 {} 条动态", linkName, items.size());
+            if (items.isEmpty() && status.isEmpty()) {
+                // 无数据空转（Reconciler 在同步进行中保守放进来的场景），不值一条 INFO
+                log.debug("[围炉] 友链 [{}] 无围炉数据，级联清理空转", linkName);
+            } else {
+                log.info("[围炉] 友链 [{}] 已删除或取消订阅，级联清理 {} 条动态",
+                    linkName, items.size());
+            }
             return null;
         });
     }
