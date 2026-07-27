@@ -693,7 +693,60 @@ html[data-fs-scheme="dark"] .fireside-scheme-moon {
   }
 }
 
-/* 评论区：随正文缩进；官方评论组件自带卡片样式，不再套底色 */
+/* ===== 评论预览（仿朋友圈灰底块，仅列表页自身瞬间）=====
+   整块可点进详情页；内容由 JS 进视口后填充，SSR 先出骨架高度 */
+.fireside-comment-preview {
+  position: relative;
+  margin: 8px 0 0 54px;
+  padding: 8px 10px;
+  border-radius: 3px;
+  background: #f7f7f7;
+  font-size: 14px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+/* 顶边小尖角：朋友圈同款位于左上 */
+.fireside-comment-preview::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 12px;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 5px solid #f7f7f7;
+}
+.fireside-comment-preview:hover {
+  background: #f0f0f0;
+}
+.fireside-comment-preview:hover::before {
+  border-bottom-color: #f0f0f0;
+}
+/* 单条：昵称蓝不加粗 + 全角冒号 + 正文连排，换行不缩进 */
+.fireside-comment-preview__line {
+  margin: 0;
+  color: #1a1a1a;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+.fireside-comment-preview__line + .fireside-comment-preview__line {
+  margin-top: 3px;
+}
+.fireside-comment-preview__name {
+  color: #576b95;
+}
+.fireside-comment-preview__more {
+  display: block;
+  margin-top: 5px;
+  font-size: 13px;
+  color: #576b95;
+  text-decoration: none;
+}
+/* 评论按钮由 button 改为跳详情页的 a 后去下划线 */
+a.fireside-action {
+  text-decoration: none;
+}
+
+/* 评论区：随正文缩进（仅详情页仍内嵌官方评论组件，自带卡片样式不套底色） */
 .fireside-comments {
   margin: 10px 0 0 54px;
   font-size: 14px;
@@ -1272,6 +1325,25 @@ body.fireside-dragging {
   html:not([data-fs-scheme="light"]) .fireside-action {
     color: #7d90a9;
   }
+  html:not([data-fs-scheme="light"]) .fireside-comment-preview {
+    background: #1e1e1e;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-comment-preview::before {
+    border-bottom-color: #1e1e1e;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-comment-preview:hover {
+    background: #262626;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-comment-preview:hover::before {
+    border-bottom-color: #262626;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-comment-preview__line {
+    color: #d5d5d5;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-comment-preview__name,
+  html:not([data-fs-scheme="light"]) .fireside-comment-preview__more {
+    color: #7d90a9;
+  }
   html:not([data-fs-scheme="light"]) .fireside-like.fireside-liked {
     color: #e64340;
   }
@@ -1492,6 +1564,25 @@ html[data-fs-scheme="dark"] .fireside-source {
   color: #7d90a9;
 }
 html[data-fs-scheme="dark"] .fireside-action {
+  color: #7d90a9;
+}
+html[data-fs-scheme="dark"] .fireside-comment-preview {
+  background: #1e1e1e;
+}
+html[data-fs-scheme="dark"] .fireside-comment-preview::before {
+  border-bottom-color: #1e1e1e;
+}
+html[data-fs-scheme="dark"] .fireside-comment-preview:hover {
+  background: #262626;
+}
+html[data-fs-scheme="dark"] .fireside-comment-preview:hover::before {
+  border-bottom-color: #262626;
+}
+html[data-fs-scheme="dark"] .fireside-comment-preview__line {
+  color: #d5d5d5;
+}
+html[data-fs-scheme="dark"] .fireside-comment-preview__name,
+html[data-fs-scheme="dark"] .fireside-comment-preview__more {
   color: #7d90a9;
 }
 html[data-fs-scheme="dark"] .fireside-like.fireside-liked {

@@ -1,7 +1,7 @@
 /**
- * 围炉 /fireside 页面脚本：点赞与评论区显隐切换。
- * 页面内容（含分页）全部由服务端渲染；评论组件由模板中的
- * <halo:comment> 官方标签渲染并自初始化，本脚本不感知其内部实现。
+ * 围炉 /fireside 页面脚本：点赞、评论预览、富链接、发瞬间等交互。
+ * 页面内容（含分页）全部由服务端渲染；列表页评论只做只读预览
+ * （仿朋友圈灰底块，点击进详情页），完整评论组件仅详情页模板渲染。
  */
 ;(function () {
   'use strict';
@@ -302,17 +302,119 @@
       });
   }
 
-  function toggleComments(btn) {
-    var card = btn.closest('.fireside-card');
-    var box = card && card.querySelector('.fireside-comments');
-    if (!box) {
+  /* ===== 评论预览（仿朋友圈灰底块，仅列表页模板渲染容器）=====
+   * 容器由服务端出骨架（min-height + 可选「查看全部」链接），进入视口后
+   * 请求 Halo 公开评论接口取「置顶 + 最新」顶层评论填充；可见性与脱敏
+   * 由接口保证，渲染一律 textContent，评论内容绝不作为 HTML 插入 */
+  var COMMENTS_API = '/apis/api.halo.run/v1alpha1/comments';
+  var PREVIEW_FETCH_MAX = 100; // 「全部」档（data-limit=-1）的单次抓取兜底上限
+
+  function bindCommentPreviews() {
+    var nodes = document.querySelectorAll(
+      '.fireside-comment-preview[data-name]:not([data-cp-done])');
+    if (!nodes.length) {
       return;
     }
-    box.hidden = !box.hidden;
-    // 评论组件插件未装时 halo:comment 渲染为空，给一行提示
-    if (!box.hidden && box.children.length === 0 && !box.textContent.trim()) {
-      box.textContent = '评论不可用（站点未安装或未启用「评论组件」插件）';
+    // 无 IntersectionObserver 时直接加载（极老环境）
+    if (typeof IntersectionObserver === 'undefined') {
+      Array.prototype.forEach.call(nodes, fillCommentPreview);
+      return;
     }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) {
+          return;
+        }
+        io.unobserve(entry.target);
+        fillCommentPreview(entry.target);
+      });
+    }, { rootMargin: '300px 0px', threshold: 0.01 });
+    Array.prototype.forEach.call(nodes, function (el) {
+      io.observe(el);
+    });
+  }
+
+  function fillCommentPreview(box) {
+    if (box.getAttribute('data-cp-done')) {
+      return;
+    }
+    box.setAttribute('data-cp-done', '1');
+    var limit = parseInt(box.getAttribute('data-limit') || '0', 10);
+    var size = limit > 0 ? Math.min(limit, PREVIEW_FETCH_MAX) : PREVIEW_FETCH_MAX;
+    var qs = new URLSearchParams({
+      group: 'moment.halo.run',
+      version: 'v1alpha1',
+      kind: 'Moment',
+      name: box.getAttribute('data-name') || '',
+      page: '1',
+      size: String(size)
+    });
+    fetch(COMMENTS_API + '?' + qs.toString(), {
+      credentials: 'same-origin',
+      headers: { 'Accept': 'application/json' }
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        renderCommentPreview(box, data);
+      })
+      .catch(function (err) {
+        console.warn('[围炉] 评论预览加载失败', err);
+        // 失败：撤掉骨架高度；没有「查看全部」链接的空盒整个移除
+        box.style.minHeight = '';
+        if (!box.children.length) {
+          box.remove();
+        }
+      });
+  }
+
+  function renderCommentPreview(box, data) {
+    var items = (data && data.items) || [];
+    // 计数器与实际可见评论可能短暂不一致（如评论刚被隐藏），空数据不留空盒
+    if (!items.length) {
+      box.remove();
+      return;
+    }
+    // 接口默认序为「置顶在前、其余最新在前」，取到的即「置顶 + 最新」；
+    // 展示按时间正序重排，符合朋友圈从上往下读的时序
+    items.sort(function (a, b) {
+      return commentTime(a) - commentTime(b);
+    });
+    var more = box.querySelector('.fireside-comment-preview__more');
+    var frag = document.createDocumentFragment();
+    items.forEach(function (item) {
+      var line = document.createElement('p');
+      line.className = 'fireside-comment-preview__line';
+      var owner = document.createElement('span');
+      owner.className = 'fireside-comment-preview__name';
+      owner.textContent = (item.owner && item.owner.displayName) || '匿名';
+      line.appendChild(owner);
+      line.appendChild(document.createTextNode(
+        '：' + ((item.spec && item.spec.content) || '')));
+      frag.appendChild(line);
+    });
+    box.insertBefore(frag, more || null);
+    box.style.minHeight = '';
+    // 「全部」档超出抓取上限、或 SSR 计数偏低时，动态补一条「查看全部」
+    var total = (data && data.total) || 0;
+    if (!more && total > items.length) {
+      var link = document.createElement('a');
+      link.className = 'fireside-comment-preview__more';
+      link.href = '/fireside/'
+        + encodeURIComponent(box.getAttribute('data-name') || '');
+      link.textContent = '查看全部 ' + total + ' 条评论';
+      box.appendChild(link);
+    }
+  }
+
+  /** 评论创建时间毫秒值（排序用），解析失败按 0 沉底 */
+  function commentTime(item) {
+    var time = (item.spec && item.spec.creationTime)
+      || (item.metadata && item.metadata.creationTimestamp) || '';
+    var ms = Date.parse(time);
+    return isNaN(ms) ? 0 : ms;
   }
 
   /** 详情页：评论区默认展开，按钮平滑滚动定位过去 */
@@ -379,9 +481,21 @@
       scrollToComments(scrollBtn);
       return;
     }
-    var commentBtn = e.target.closest('.fireside-comment-toggle');
-    if (commentBtn) {
-      toggleComments(commentBtn);
+    var preview = e.target.closest('.fireside-comment-preview');
+    if (preview) {
+      // 点中内部真实链接（「查看全部」）走原生跳转，保留新标签等修饰键行为
+      if (e.target.closest('a')) {
+        return;
+      }
+      // 用户正选中评论文字复制时不触发跳转
+      var selection = window.getSelection();
+      if (selection && String(selection)) {
+        return;
+      }
+      var momentName = preview.getAttribute('data-name');
+      if (momentName) {
+        location.href = '/fireside/' + encodeURIComponent(momentName);
+      }
     }
   });
 
@@ -426,6 +540,7 @@
   cleanContentTags();
   bindMediaLoading();
   bindRichLinks(document);
+  bindCommentPreviews();
 
   // 标签栏：桌面端滚轮转为横向滚动（滚动条已隐藏，移动端触摸原生支持）
   var tagsNav = document.querySelector('.fireside-tags');

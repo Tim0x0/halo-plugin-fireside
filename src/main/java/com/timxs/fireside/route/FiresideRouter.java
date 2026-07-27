@@ -99,7 +99,7 @@ public class FiresideRouter {
             "moments", slice,
             TEMPLATE_ID, "fireside",
             "tag", Optional.ofNullable(tag).orElse(""),
-            // display 组配置整体给模板：页面标题、封面图、签名、友链标签
+            // display 组配置整体给模板（含 appearance / interaction 分节）
             "display", display,
             // Halo 模板全局变量只有 site/theme，插件版本需自行放入 model
             // 供模板给静态资源 URL 加 ?v= 缓存指纹

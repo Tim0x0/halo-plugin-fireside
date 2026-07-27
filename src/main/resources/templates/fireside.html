@@ -10,8 +10,8 @@
   <!-- 防闪烁：首帧前应用配色（访客本地选择 > 站长默认），CSS 据 data-fs-scheme 分档 -->
   <script th:inline="javascript">
     (function () {
-      var scheme = /*[[${display.effectiveColorScheme()}]]*/ 'auto';
-      var allowToggle = /*[[${display.effectiveAllowSchemeToggle()}]]*/ true;
+      var scheme = /*[[${display.appearance.effectiveColorScheme()}]]*/ 'auto';
+      var allowToggle = /*[[${display.appearance.effectiveAllowSchemeToggle()}]]*/ true;
       if (allowToggle) {
         try {
           var saved = localStorage.getItem('fireside.scheme');
@@ -34,11 +34,11 @@
   <main class="fireside-container">
     <!-- 封面区：仿微信朋友圈头部（封面图 + 右下角昵称与头像悬挂） -->
     <header class="fireside-cover">
-      <img th:if="${!#strings.isEmpty(display.coverImage)}"
+      <img th:if="${!#strings.isEmpty(display.appearance.coverImage)}"
            class="fireside-cover-img"
-           th:src="${display.coverImage}"
+           th:src="${display.appearance.coverImage}"
            alt="封面图">
-      <div th:if="${#strings.isEmpty(display.coverImage)}"
+      <div th:if="${#strings.isEmpty(display.appearance.coverImage)}"
            class="fireside-cover-img fireside-cover-default"></div>
       <!-- 返回站点首页 -->
       <a class="fireside-home" th:href="@{/}" title="返回首页">
@@ -47,7 +47,7 @@
       <!-- 发瞬间入口（仿朋友圈封面右上角相机）。三层显隐：
            设置开关(SSR) → 已登录(SSR，匿名访客无此节点) → 有 UC 发布权限(JS 探测后显示) -->
       <button type="button" id="fs-compose-entry" class="fireside-compose-entry" hidden
-              th:if="${display.effectiveShowComposeEntry()}"
+              th:if="${display.interaction.effectiveShowComposeEntry()}"
               sec:authorize="isAuthenticated()"
               title="发瞬间">
         <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M208 56h-27.72l-13.63-20.44A12 12 0 0 0 156.67 30h-57.34a12 12 0 0 0-9.98 5.34L75.72 56H48a28 28 0 0 0-28 28v108a28 28 0 0 0 28 28h160a28 28 0 0 0 28-28V84a28 28 0 0 0-28-28m4 136a4 4 0 0 1-4 4H48a4 4 0 0 1-4-4V84a4 4 0 0 1 4-4h34.14a12 12 0 0 0 9.98-5.34L105.75 54h44.5l13.63 20.44a12 12 0 0 0 9.98 5.56H208a4 4 0 0 1 4 4Zm-84-96a48 48 0 1 0 48 48a48.05 48.05 0 0 0-48-48m0 72a24 24 0 1 1 24-24a24 24 0 0 1-24 24"/></svg>
@@ -66,8 +66,8 @@
 
     <!-- 签名：右对齐显示在头像下方（仿朋友圈签名位，站点一句话描述） -->
     <div class="fireside-signature"
-         th:if="${!#strings.isEmpty(display.signature)}"
-         th:text="${display.signature}">个性签名</div>
+         th:if="${!#strings.isEmpty(display.appearance.signature)}"
+         th:text="${display.appearance.signature}">个性签名</div>
 
     <!-- 标签筛选：全部 + 各标签（含友链标签，固定末位），单行横向滑动 -->
     <nav class="fireside-tags">
@@ -188,12 +188,13 @@
                 <svg class="fireside-icon fireside-icon-heart-fill" viewBox="0 0 256 256" aria-hidden="true"><path d="M240 102c0 70-103.79 126.66-108.21 129a8 8 0 0 1-7.58 0C119.79 228.66 16 172 16 102a62.07 62.07 0 0 1 62-62c20.65 0 38.73 8.88 50 23.89C139.27 48.88 157.35 40 178 40a62.07 62.07 0 0 1 62 62"/></svg>
                 <span class="fireside-like-count" th:text="${moment.stats.upvote}">0</span>
               </button>
-              <button type="button" class="fireside-action fireside-comment-toggle"
-                      th:attr="data-name=${moment.metadata.name}"
-                      title="评论">
+              <!-- 评论按钮改为链接：列表页不再原地展开评论，统一进详情页评论区 -->
+              <a class="fireside-action fireside-comment-link"
+                 th:href="@{'/fireside/' + ${moment.metadata.name}}"
+                 title="评论">
                 <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M128 20a108 108 0 0 0-96.15 157.23L21 209.66A20 20 0 0 0 46.34 235l32.43-10.81A108 108 0 1 0 128 20m0 192a84 84 0 0 1-42.06-11.27a12 12 0 0 0-6-1.62a12.1 12.1 0 0 0-3.8.62l-29.79 9.93l9.93-29.79a12 12 0 0 0-1-9.81A84 84 0 1 1 128 212"/></svg>
                 <span th:text="${moment.stats.approvedComment}">0</span>
-              </button>
+              </a>
               <button type="button" class="fireside-action fireside-copy"
                       th:attr="data-path='/fireside/' + ${moment.metadata.name}"
                       title="复制链接">
@@ -207,12 +208,22 @@
                rel="noopener nofollow noreferrer">查看原文</a>
           </div>
 
-          <!-- 自身瞬间的评论区：与官方主题（theme-earth 瞬间页）同款——
-               服务端 halo:comment 标签渲染，默认隐藏，点评论按钮切换显示 -->
-          <div class="fireside-comments" hidden
-               th:if="!${moment.external}"
-               th:attr="data-name=${moment.metadata.name}, id='fs-comment-' + ${moment.metadata.name}">
-            <halo:comment group="moment.halo.run" kind="Moment" th:attr="name=${moment.metadata.name}" />
+          <!-- 评论预览（仿朋友圈灰底块）：最新顶层评论就地展示，整块点击进详情页。
+               条数由插件设置控制（0 关闭 / -1 全部 / N 上限），进入视口后由 JS
+               经 Halo 公开评论接口拉取填充（可见性与脱敏由接口保证）；SSR 只出
+               骨架高度与「查看全部」链接，JS 失效时链接仍可点。完整评论区在详情页 -->
+          <div class="fireside-comment-preview"
+               th:if="${!moment.external and moment.stats.approvedComment > 0
+                 and display.interaction.effectiveCommentPreviewCount() != 0}"
+               th:with="fsLimit=${display.interaction.effectiveCommentPreviewCount()},
+                 fsShown=${fsLimit > 0 and moment.stats.approvedComment > fsLimit
+                   ? fsLimit : moment.stats.approvedComment}"
+               th:attr="data-name=${moment.metadata.name}, data-limit=${fsLimit}"
+               th:style="${'min-height:' + (16 + 21 * (fsShown > 6 ? 6 : fsShown)) + 'px'}">
+            <a class="fireside-comment-preview__more"
+               th:if="${fsLimit > 0 and moment.stats.approvedComment > fsLimit}"
+               th:href="@{'/fireside/' + ${moment.metadata.name}}"
+               th:text="'查看全部 ' + ${moment.stats.approvedComment} + ' 条评论'">查看全部评论</a>
           </div>
         </article>
       </th:block>
@@ -223,7 +234,7 @@
       </div>
     </div>
 
-    <!-- 分页：游标式"更早的动态"（每一页都是完整 SSR，评论走官方组件） -->
+    <!-- 分页：游标式"更早的动态"（每一页都是完整 SSR） -->
     <nav class="fireside-pager"
          th:if="${!#strings.isEmpty(olderUrl) or !#strings.isEmpty(latestUrl)}">
       <a th:if="${!#strings.isEmpty(latestUrl)}"
@@ -243,7 +254,7 @@
     <!-- 发瞬间浮层：与入口同门槛（设置开关 + 登录），匿名访客零 DOM。
          发布走瞬间插件 UC API，服务端按角色决定是否需要审核 -->
     <div id="fs-compose" class="fireside-compose" hidden
-         th:if="${display.effectiveShowComposeEntry()}"
+         th:if="${display.interaction.effectiveShowComposeEntry()}"
          sec:authorize="isAuthenticated()">
       <div class="fireside-compose-mask" data-compose-close></div>
       <div class="fireside-compose-panel" role="dialog" aria-modal="true" aria-label="发瞬间">
@@ -292,7 +303,7 @@
         <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M216.49 168.49a12 12 0 0 1-17 0L128 97l-71.51 71.49a12 12 0 0 1-17-17l80-80a12 12 0 0 1 17 0l80 80a12 12 0 0 1 0 17"/></svg>
       </button>
       <button type="button" id="fs-scheme" class="fireside-fab"
-              th:if="${display.effectiveAllowSchemeToggle()}"
+              th:if="${display.appearance.effectiveAllowSchemeToggle()}"
               title="配色：跟随系统">
         <svg class="fireside-icon fireside-scheme-auto" viewBox="0 0 256 256" aria-hidden="true"><path d="M128,20A108,108,0,1,0,236,128,108.12,108.12,0,0,0,128,20Zm0,192a84,84,0,1,1,84-84A84.09,84.09,0,0,1,128,212ZM128,44a84,84,0,0,1,0,168Z"/></svg>
         <svg class="fireside-icon fireside-scheme-sun" viewBox="0 0 256 256" aria-hidden="true"><path d="M116,36V20a12,12,0,0,1,24,0V36a12,12,0,0,1-24,0Zm80,92a68,68,0,1,1-68-68A68.07,68.07,0,0,1,196,128Zm-24,0a44,44,0,1,0-44,44A44.05,44.05,0,0,0,172,128ZM51.51,68.49a12,12,0,1,0,17-17l-12-12a12,12,0,0,0-17,17Zm0,119-12,12a12,12,0,0,0,17,17l12-12a12,12,0,1,0-17-17ZM196,72a12,12,0,0,0,8.49-3.51l12-12a12,12,0,0,0-17-17l-12,12A12,12,0,0,0,196,72Zm8.49,115.51a12,12,0,0,0-17,17l12,12a12,12,0,0,0,17-17ZM48,128a12,12,0,0,0-12-12H20a12,12,0,0,0,0,24H36A12,12,0,0,0,48,128Zm80,80a12,12,0,0,0-12,12v16a12,12,0,0,0,24,0V220A12,12,0,0,0,128,208Zm108-92H220a12,12,0,0,0,0,24h16a12,12,0,0,0,0-24Z"/></svg>
@@ -300,7 +311,7 @@
       </button>
     </div>
 
-    <!-- JS：点赞 / 评论显隐切换 -->
+    <!-- JS：点赞 / 评论预览 / 富链接 / 发瞬间等交互 -->
     <script th:src="@{/plugins/plugin-fireside/assets/static/fireside.js?v={version}(version=${pluginVersion})}"></script>
   </main>
 </body>

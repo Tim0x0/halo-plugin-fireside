@@ -5,6 +5,8 @@ import org.apache.commons.lang3.StringUtils;
 
 /**
  * settings.yaml 中 display 组的配置项。
+ * tab 内以 $formkit: group 分节：基础字段平铺，外观/互动嵌套在
+ * appearance / interaction 子对象下（与表单分节一一对应）。
  */
 @Data
 public class DisplayConfig {
@@ -38,57 +40,19 @@ public class DisplayConfig {
     private String titleSeparator;
 
     /**
-     * 内置页面顶部的朋友圈式封面图 URL；空则模板使用默认深色底。
-     */
-    private String coverImage;
-
-    /**
-     * 封面下方的签名（仿朋友圈签名位，通常填站点一句话描述）；空则不显示。
-     */
-    private String signature;
-
-    /**
      * 赋给每条友链动态的标签名；主题可用 ?tag=该标签 仅筛出友链动态。
      */
     private String friendTag;
 
     /**
-     * 是否在内置页封面显示「发瞬间」入口（仅对有发布权限的登录用户可见）。
+     * 外观分节；初始化默认实例，存量配置无该节点时模板取值不为 null。
      */
-    private Boolean showComposeEntry;
+    private Appearance appearance = new Appearance();
 
     /**
-     * 内置页默认配色方案：auto=跟随系统 / light / dark；
-     * 访客切换（若允许）保存在其浏览器本地并优先于此默认值。
+     * 互动分节；初始化默认实例，存量配置无该节点时模板取值不为 null。
      */
-    private String colorScheme;
-
-    /**
-     * 是否在内置页右下角显示访客配色切换按钮。
-     */
-    private Boolean allowSchemeToggle;
-
-    /**
-     * 发瞬间入口：默认开启，仅显式关闭时隐藏。
-     */
-    public boolean effectiveShowComposeEntry() {
-        return !Boolean.FALSE.equals(showComposeEntry);
-    }
-
-    /**
-     * 配色方案：仅接受 light/dark，其余（含未配置）回退 auto。
-     */
-    public String effectiveColorScheme() {
-        String value = StringUtils.trim(colorScheme);
-        return "light".equals(value) || "dark".equals(value) ? value : "auto";
-    }
-
-    /**
-     * 访客配色切换按钮：默认显示。
-     */
-    public boolean effectiveAllowSchemeToggle() {
-        return !Boolean.FALSE.equals(allowSchemeToggle);
-    }
+    private Interaction interaction = new Interaction();
 
     public String effectiveFriendTag() {
         // 井号由展示层统一添加；配置值带 # 会导致双井号，且 # 是 URL 锚点符会破坏
@@ -112,7 +76,7 @@ public class DisplayConfig {
     }
 
     /**
-     * 每页条数：默认 20，钳制到 10~100（大值会放大首屏渲染与评论组件请求量）。
+     * 每页条数：默认 20，钳制到 10~100（大值会拉长首屏渲染）。
      */
     public int effectivePageSize() {
         if (pageSize == null) {
@@ -126,5 +90,84 @@ public class DisplayConfig {
      */
     public String effectiveTitleSeparator() {
         return "|".equals(StringUtils.trim(titleSeparator)) ? "|" : "-";
+    }
+
+    /**
+     * 外观分节（$formkit: group name=appearance）：封面、签名、配色。
+     */
+    @Data
+    public static class Appearance {
+
+        /**
+         * 内置页面顶部的朋友圈式封面图 URL；空则模板使用默认深色底。
+         */
+        private String coverImage;
+
+        /**
+         * 封面下方的签名（仿朋友圈签名位，通常填站点一句话描述）；空则不显示。
+         */
+        private String signature;
+
+        /**
+         * 内置页默认配色方案：auto=跟随系统 / light / dark；
+         * 访客切换（若允许）保存在其浏览器本地并优先于此默认值。
+         */
+        private String colorScheme;
+
+        /**
+         * 是否在内置页右下角显示访客配色切换按钮。
+         */
+        private Boolean allowSchemeToggle;
+
+        /**
+         * 配色方案：仅接受 light/dark，其余（含未配置）回退 auto。
+         */
+        public String effectiveColorScheme() {
+            String value = StringUtils.trim(colorScheme);
+            return "light".equals(value) || "dark".equals(value) ? value : "auto";
+        }
+
+        /**
+         * 访客配色切换按钮：默认显示。
+         */
+        public boolean effectiveAllowSchemeToggle() {
+            return !Boolean.FALSE.equals(allowSchemeToggle);
+        }
+    }
+
+    /**
+     * 互动分节（$formkit: group name=interaction）：评论预览、发瞬间入口。
+     */
+    @Data
+    public static class Interaction {
+
+        public static final int DEFAULT_COMMENT_PREVIEW_COUNT = 10;
+
+        /**
+         * 列表页自身瞬间卡片下方的评论预览条数：0 关闭，-1 全部，正数为上限。
+         */
+        private Integer commentPreviewCount;
+
+        /**
+         * 是否在内置页封面显示「发瞬间」入口（仅对有发布权限的登录用户可见）。
+         */
+        private Boolean showComposeEntry;
+
+        /**
+         * 评论预览条数：默认 10，钳制到 -1~100（-1=全部，0=关闭）。
+         */
+        public int effectiveCommentPreviewCount() {
+            if (commentPreviewCount == null) {
+                return DEFAULT_COMMENT_PREVIEW_COUNT;
+            }
+            return Math.max(-1, Math.min(100, commentPreviewCount));
+        }
+
+        /**
+         * 发瞬间入口：默认开启，仅显式关闭时隐藏。
+         */
+        public boolean effectiveShowComposeEntry() {
+            return !Boolean.FALSE.equals(showComposeEntry);
+        }
     }
 }

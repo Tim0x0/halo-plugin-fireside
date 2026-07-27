@@ -16,14 +16,6 @@ spec:
           name: detailPageTitle
           label: 详情页标题
           help: 详情页顶栏与浏览器标题使用的名称，留空则跟随页面标题
-        - $formkit: number
-          name: pageSize
-          label: 每页条数
-          value: 20
-          min: 10
-          max: 100
-          validation: required|min:10|max:100
-          help: 内置 /fireside 页面每页展示的动态条数，范围 10~100。值越大首屏越长，自身瞬间的评论组件会逐条加载，过大将增加首屏请求量
         - $formkit: radio
           name: titleSeparator
           label: 标题分隔符
@@ -34,42 +26,66 @@ spec:
             - label: '|'
               value: '|'
           help: 浏览器标签页标题的分隔符，如「围炉 - 站点名」或「围炉 | 站点名」
-        - $formkit: attachment
-          name: coverImage
-          label: 封面图
-          help: 内置 /fireside 页面顶部的朋友圈式封面图，建议横图；留空则使用默认深色底
-        - $formkit: textarea
-          name: signature
-          label: 签名
-          rows: 2
-          help: 显示在封面下方、头像一侧（仿朋友圈签名位），可填站点的一句话描述，如「记录生活中的点滴瞬间」；留空则不显示
+        - $formkit: number
+          name: pageSize
+          label: 每页条数
+          value: 20
+          min: 10
+          max: 100
+          validation: required|min:10|max:100
+          help: 内置 /fireside 页面每页展示的动态条数，范围 10~100。值越大首屏越长
         - $formkit: text
           name: friendTag
           label: 友链动态标签
           value: 友链
           help: 赋给每条友链动态的标签名（无需带 # 号，展示时自动添加）；主题可用 ?tag=该标签 仅筛出友链动态。留空则使用默认值「友链」
-        - $formkit: checkbox
-          name: showComposeEntry
-          label: 显示发瞬间入口
-          value: true
-          help: 在 /fireside 封面右上角显示相机按钮（仿朋友圈），可在页面内直接发布瞬间。仅对已登录且有「允许发布自己的瞬间」权限的用户可见，访客不可见；无免审核权限的用户发布后需经后台审核才会展示
-        - $formkit: radio
-          name: colorScheme
-          label: 配色方案
-          value: auto
-          options:
-            - label: 跟随系统
+        - $formkit: group
+          name: appearance
+          label: 外观
+          children:
+            - $formkit: attachment
+              name: coverImage
+              label: 封面图
+              help: 内置 /fireside 页面顶部的朋友圈式封面图，建议横图；留空则使用默认深色底
+            - $formkit: textarea
+              name: signature
+              label: 签名
+              rows: 2
+              help: 显示在封面下方、头像一侧（仿朋友圈签名位），可填站点的一句话描述，如「记录生活中的点滴瞬间」；留空则不显示
+            - $formkit: radio
+              name: colorScheme
+              label: 配色方案
               value: auto
-            - label: 浅色
-              value: light
-            - label: 深色
-              value: dark
-          help: 内置 /fireside 页面的默认配色；允许访客切换时，访客的选择优先于此默认值
-        - $formkit: checkbox
-          name: allowSchemeToggle
-          label: 允许访客切换配色
-          value: true
-          help: 在页面右下角显示 明/暗/自动 切换按钮，访客的选择保存在其浏览器本地。关闭后页面严格按上方默认配色显示
+              options:
+                - label: 跟随系统
+                  value: auto
+                - label: 浅色
+                  value: light
+                - label: 深色
+                  value: dark
+              help: 内置 /fireside 页面的默认配色；允许访客切换时，访客的选择优先于此默认值
+            - $formkit: checkbox
+              name: allowSchemeToggle
+              label: 允许访客切换配色
+              value: true
+              help: 在页面右下角显示 明/暗/自动 切换按钮，访客的选择保存在其浏览器本地。关闭后页面严格按上方默认配色显示
+        - $formkit: group
+          name: interaction
+          label: 互动
+          children:
+            - $formkit: number
+              name: commentPreviewCount
+              label: 评论预览条数
+              value: 10
+              min: -1
+              max: 100
+              validation: required|min:-1|max:100
+              help: 自身瞬间卡片下方灰底展示的最新顶层评论条数（仿朋友圈，进入视口后加载，不含回复）。0 为关闭预览，-1 为全部显示；超出条数时显示「查看全部 N 条评论」入口
+            - $formkit: checkbox
+              name: showComposeEntry
+              label: 显示发瞬间入口
+              value: true
+              help: 在 /fireside 封面右上角显示相机按钮（仿朋友圈），可在页面内直接发布瞬间。仅对已登录且有「允许发布自己的瞬间」权限的用户可见，访客不可见；无免审核权限的用户发布后需经后台审核才会展示
     - group: sync
       label: 同步设置
       formSchema:
