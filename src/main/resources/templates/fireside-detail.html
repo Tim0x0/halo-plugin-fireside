@@ -134,7 +134,7 @@
     <!-- 页脚：版权行 + 项目链接 -->
     <footer class="fireside-footer">
       <p>© <span th:text="${#temporals.format(#temporals.createNow(), 'yyyy')}">2026</span>
-        <span th:text="${site.title}">站点名称</span> ·
+        <a th:href="@{/}" th:text="${site.title}">站点名称</a> ·
         Powered by <a href="https://github.com/Tim0x0/halo-plugin-fireside"
                       target="_blank" rel="noopener">Fireside</a></p>
     </footer>

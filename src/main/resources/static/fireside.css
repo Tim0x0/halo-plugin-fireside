@@ -755,6 +755,18 @@ html[data-fs-scheme="dark"] .fireside-scheme-moon {
 .fireside-comment-preview__text code {
   font-size: 13px;
 }
+/* 评论内图片（表情包/贴图）：对齐微信朋友圈评论表情——随文字行高走，
+   约一行字大小行内嵌排，不撑开灰底块行距 */
+.fireside-comment-preview__text img {
+  display: inline-block;
+  vertical-align: text-bottom;
+  max-height: 1.5em;
+  max-width: 3em;
+  width: auto;
+  height: auto;
+  border-radius: 2px;
+  cursor: zoom-in;
+}
 .fireside-comment-preview__text a {
   color: #576b95;
   text-decoration: none;

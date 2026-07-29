@@ -188,9 +188,13 @@
                 <svg class="fireside-icon fireside-icon-heart-fill" viewBox="0 0 256 256" aria-hidden="true"><path d="M240 102c0 70-103.79 126.66-108.21 129a8 8 0 0 1-7.58 0C119.79 228.66 16 172 16 102a62.07 62.07 0 0 1 62-62c20.65 0 38.73 8.88 50 23.89C139.27 48.88 157.35 40 178 40a62.07 62.07 0 0 1 62 62"/></svg>
                 <span class="fireside-like-count" th:text="${moment.stats.upvote}">0</span>
               </button>
-              <!-- 评论按钮改为链接：列表页不再原地展开评论，统一进详情页评论区 -->
+              <!-- 评论按钮：JS 接管点击原地展开评论区（点击时才挂载官方组件）；
+                   无 JS、修饰键/中键点击时回退原生跳详情页评论区（渐进增强） -->
               <a class="fireside-action fireside-comment-link"
                  th:href="@{'/fireside/' + ${moment.metadata.name}}"
+                 th:attr="data-name=${moment.metadata.name},
+                   aria-controls='fs-comments-' + ${moment.metadata.name}"
+                 aria-expanded="false"
                  title="评论">
                 <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M128 20a108 108 0 0 0-96.15 157.23L21 209.66A20 20 0 0 0 46.34 235l32.43-10.81A108 108 0 1 0 128 20m0 192a84 84 0 0 1-42.06-11.27a12 12 0 0 0-6-1.62a12.1 12.1 0 0 0-3.8.62l-29.79 9.93l9.93-29.79a12 12 0 0 0-1-9.81A84 84 0 1 1 128 212"/></svg>
                 <span th:text="${moment.stats.approvedComment}">0</span>
@@ -225,6 +229,12 @@
                th:href="@{'/fireside/' + ${moment.metadata.name}}"
                th:text="'查看全部 ' + ${moment.stats.approvedComment} + ' 条评论'">查看全部评论</a>
           </div>
+
+          <!-- 完整评论区模板：<template> 内容惰性（不渲染、脚本不执行、组件不初始化），
+               页面加载零开销；点评论按钮时 JS 克隆挂载，只初始化被展开卡片的评论组件 -->
+          <template class="fireside-comments-tpl" th:if="!${moment.external}">
+            <halo:comment group="moment.halo.run" kind="Moment" th:attr="name=${moment.metadata.name}" />
+          </template>
         </article>
       </th:block>
 
@@ -246,7 +256,7 @@
     <!-- 页脚：版权行 + 项目链接 -->
     <footer class="fireside-footer">
       <p>© <span th:text="${#temporals.format(#temporals.createNow(), 'yyyy')}">2026</span>
-        <span th:text="${site.title}">站点名称</span> ·
+        <a th:href="@{/}" th:text="${site.title}">站点名称</a> ·
         Powered by <a href="https://github.com/Tim0x0/halo-plugin-fireside"
                       target="_blank" rel="noopener">Fireside</a></p>
     </footer>

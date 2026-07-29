@@ -310,12 +310,13 @@
   var COMMENTS_API = '/apis/api.halo.run/v1alpha1/comments';
   var PREVIEW_FETCH_MAX = 100; // 「全部」档（data-limit=-1）的单次抓取兜底上限
 
-  // 白名单对齐官方评论组件（sanitize-html 默认档，无图片/媒体）；
-  // 属性只留 href，防止评论借 class 伪装本插件 UI 元素
+  // 白名单在官方评论组件 sanitize-html 默认档上放行 img（表情包/贴图评论）；
+  // 属性只留 href/src/alt，防止评论借 class 伪装本插件 UI 元素
   var PREVIEW_SANITIZE = {
     ALLOWED_TAGS: ['a', 'p', 'br', 'b', 'strong', 'i', 'em', 'u', 's',
-      'del', 'strike', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li', 'span'],
-    ALLOWED_ATTR: ['href'],
+      'del', 'strike', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li', 'span',
+      'img'],
+    ALLOWED_ATTR: ['href', 'src', 'alt'],
     ALLOW_DATA_ATTR: false
   };
   var purifyHooked = false;
@@ -332,6 +333,11 @@
         if (node.tagName === 'A') {
           node.setAttribute('target', '_blank');
           node.setAttribute('rel', 'noopener noreferrer nofollow ugc');
+        }
+        if (node.tagName === 'IMG') {
+          node.setAttribute('loading', 'lazy');
+          node.setAttribute('decoding', 'async');
+          node.setAttribute('referrerpolicy', 'no-referrer');
         }
       });
     }
@@ -464,6 +470,133 @@
     }
   }
 
+  /** 已加载过的评论组件外链脚本：src -> { done, cbs }，跨卡片去重复用 */
+  var sharedScripts = {};
+
+  /**
+   * <template> 里克隆出来的 <script> 不会执行，需原位重建节点触发执行。
+   * 必须严格串行：外链库脚本等 load 完成后才执行后续内联初始化脚本
+   * （动态插入的内联脚本是立即执行的，不排队，直接重建会抢跑报 undefined）。
+   * 同一 src 跨卡片只加载一次，未完成时后来者挂回调排队，
+   * 避免组件库二次执行（如 customElements 重复注册报错）
+   */
+  function reviveScriptsInOrder(scripts) {
+    var queue = Array.prototype.slice.call(scripts);
+    (function next() {
+      var old = queue.shift();
+      if (!old) {
+        return;
+      }
+      var src = old.getAttribute('src');
+      if (!src) {
+        // 内联脚本：重建即同步执行，直接继续
+        var inline = document.createElement('script');
+        Array.prototype.forEach.call(old.attributes, function (attr) {
+          inline.setAttribute(attr.name, attr.value);
+        });
+        inline.textContent = old.textContent;
+        old.parentNode.replaceChild(inline, old);
+        next();
+        return;
+      }
+      var entry = sharedScripts[src];
+      if (entry) {
+        old.remove();
+        if (entry.done) {
+          next();
+        } else {
+          entry.cbs.push(next);
+        }
+        return;
+      }
+      entry = sharedScripts[src] = { done: false, cbs: [next] };
+      var script = document.createElement('script');
+      Array.prototype.forEach.call(old.attributes, function (attr) {
+        script.setAttribute(attr.name, attr.value);
+      });
+      var finish = function () {
+        entry.done = true;
+        entry.cbs.splice(0).forEach(function (cb) { cb(); });
+      };
+      script.addEventListener('load', finish, { once: true });
+      script.addEventListener('error', finish, { once: true });
+      old.parentNode.replaceChild(script, old);
+    })();
+  }
+
+  /**
+   * 评论组件输出可能带固定 id（如 #comment），多卡片同页会重复冲突；
+   * 挂载前改成带瞬间名的唯一 id，并同步替换内联脚本里的选择器/引用
+   */
+  function uniquifyIds(root, suffix) {
+    var idNodes = root.querySelectorAll('[id]');
+    Array.prototype.forEach.call(idNodes, function (el) {
+      var oldId = el.id;
+      var newId = oldId + '-' + suffix;
+      el.id = newId;
+      Array.prototype.forEach.call(root.querySelectorAll('script'), function (s) {
+        if (!s.src && s.textContent.indexOf(oldId) !== -1) {
+          s.textContent = s.textContent
+            .split('#' + oldId).join('#' + newId)
+            .split('"' + oldId + '"').join('"' + newId + '"')
+            .split("'" + oldId + "'").join("'" + newId + "'");
+        }
+      });
+    });
+  }
+
+  /**
+   * 列表页评论按钮：原地展开/收起完整评论区（点击时才挂载官方组件）。
+   * 展开时隐藏预览块避免两份评论叠放；收起时预览块重拉刷新，刚发的
+   * 评论（免审核时）立刻回显。返回 false 表示环境不支持，回退原生跳转
+   */
+  function toggleCardComments(link) {
+    var card = link.closest('.fireside-card');
+    if (!card) {
+      return false;
+    }
+    var name = link.getAttribute('data-name') || '';
+    var preview = card.querySelector('.fireside-comment-preview');
+    var box = card.querySelector('.fireside-comments');
+    if (!box) {
+      var tpl = card.querySelector('.fireside-comments-tpl');
+      // 无模板或浏览器不支持 <template>（极老环境）：回退跳详情页
+      if (!tpl || !tpl.content) {
+        return false;
+      }
+      box = document.createElement('div');
+      box.className = 'fireside-comments';
+      box.id = 'fs-comments-' + name;
+      box.appendChild(tpl.content.cloneNode(true));
+      uniquifyIds(box, name);
+      tpl.parentNode.insertBefore(box, tpl);
+      reviveScriptsInOrder(box.querySelectorAll('script'));
+    } else {
+      box.hidden = !box.hidden;
+    }
+    var expanded = !box.hidden;
+    link.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    if (preview) {
+      preview.hidden = expanded;
+      if (!expanded) {
+        refreshCommentPreview(preview);
+      }
+    }
+    return true;
+  }
+
+  /** 清空预览行并重拉数据（收起评论区后回显最新评论） */
+  function refreshCommentPreview(box) {
+    if (!box || !box.isConnected) {
+      return;
+    }
+    Array.prototype.forEach.call(
+      box.querySelectorAll('.fireside-comment-preview__line'),
+      function (line) { line.remove(); });
+    box.removeAttribute('data-cp-done');
+    fillCommentPreview(box);
+  }
+
   /** 复制条目详情页链接，成功后按钮短暂显示"已复制" */
   function handleCopy(btn) {
     var path = btn.dataset.path;
@@ -519,10 +652,25 @@
       scrollToComments(scrollBtn);
       return;
     }
+    var commentLink = e.target.closest('.fireside-comment-link');
+    if (commentLink) {
+      // 修饰键/中键点击保留原生行为（新标签打开详情页）
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) {
+        return;
+      }
+      if (toggleCardComments(commentLink)) {
+        e.preventDefault();
+      }
+      return;
+    }
     var preview = e.target.closest('.fireside-comment-preview');
     if (preview) {
       // 点中内部真实链接（「查看全部」）走原生跳转，保留新标签等修饰键行为
       if (e.target.closest('a')) {
+        return;
+      }
+      // 评论里的图片（表情包等）留给主题灯箱接管，不触发整块跳详情
+      if (e.target.closest('img')) {
         return;
       }
       // 用户正选中评论文字复制时不触发跳转
