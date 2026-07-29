@@ -734,6 +734,34 @@ html[data-fs-scheme="dark"] .fireside-scheme-moon {
 .fireside-comment-preview__name {
   color: #576b95;
 }
+/* 评论正文为消毒后 HTML：块级标签压成行内连排，段落间以小间距衔接 */
+.fireside-comment-preview__text,
+.fireside-comment-preview__text p,
+.fireside-comment-preview__text pre,
+.fireside-comment-preview__text blockquote,
+.fireside-comment-preview__text ul,
+.fireside-comment-preview__text ol,
+.fireside-comment-preview__text li {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  white-space: normal;
+  font: inherit;
+}
+.fireside-comment-preview__text p + p,
+.fireside-comment-preview__text li + li {
+  margin-left: 0.35em;
+}
+.fireside-comment-preview__text code {
+  font-size: 13px;
+}
+.fireside-comment-preview__text a {
+  color: #576b95;
+  text-decoration: none;
+}
+.fireside-comment-preview__text a:hover {
+  text-decoration: underline;
+}
 .fireside-comment-preview__more {
   display: block;
   margin-top: 5px;
@@ -955,6 +983,125 @@ a.fireside-action {
 }
 .fireside-compose-text::placeholder {
   color: #b2b2b2;
+}
+/* ===== Tiptap 编辑器（bundle 就绪后接替 textarea）：视觉与 textarea 对齐 ===== */
+.fireside-compose-editor .ProseMirror {
+  min-height: 96px;
+  padding: 4px 0 10px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #1a1a1a;
+  outline: none;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+}
+.fireside-compose-editor .ProseMirror p {
+  margin: 0;
+}
+.fireside-compose-editor .ProseMirror p + p {
+  margin-top: 0.4em;
+}
+.fireside-compose-editor .ProseMirror a {
+  color: #576b95;
+}
+/* Placeholder 扩展的空态提示（对齐 textarea ::placeholder） */
+.fireside-compose-editor .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: #b2b2b2;
+  pointer-events: none;
+}
+/* 格式工具栏：紧凑三键（B / I / 链接） */
+.fireside-compose-toolbar {
+  display: flex;
+  gap: 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #eef0f4;
+}
+.fireside-compose-toolbar[hidden] {
+  display: none;
+}
+.fireside-compose-fmt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 26px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: #444;
+  cursor: pointer;
+}
+.fireside-compose-fmt:hover {
+  background: #f2f3f5;
+}
+.fireside-compose-fmt.is-active {
+  background: #e8edf5;
+  color: #576b95;
+}
+.fireside-compose-fmt:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.fireside-compose-fmt-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 3px 4px;
+  background: #eef0f4;
+}
+/* 正文行内代码（发布框新格式）：浅底等宽，列表/详情页共用 */
+.fireside-card-content code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.055);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.9em;
+}
+/* 链接输入行：URL + 可选显示文字 + 确定/取消 */
+.fireside-compose-linkrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 2px;
+}
+.fireside-compose-linkrow[hidden] {
+  display: none;
+}
+.fireside-compose-link-input {
+  flex: 1 1 140px;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid #dfe3ea;
+  border-radius: 5px;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+  color: #1a1a1a;
+}
+.fireside-compose-link-input:focus {
+  outline: none;
+  border-color: #576b95;
+}
+.fireside-compose-link-btn {
+  padding: 5px 12px;
+  border: none;
+  border-radius: 5px;
+  background: #576b95;
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.fireside-compose-link-btn.is-quiet {
+  background: #f2f3f5;
+  color: #666;
 }
 /* 标签联想条：打 #xx 未完成时浮现，点选或 ↑↓+Enter 补全 */
 .fireside-compose-suggest {
@@ -1341,7 +1488,8 @@ body.fireside-dragging {
     color: #d5d5d5;
   }
   html:not([data-fs-scheme="light"]) .fireside-comment-preview__name,
-  html:not([data-fs-scheme="light"]) .fireside-comment-preview__more {
+  html:not([data-fs-scheme="light"]) .fireside-comment-preview__more,
+  html:not([data-fs-scheme="light"]) .fireside-comment-preview__text a {
     color: #7d90a9;
   }
   html:not([data-fs-scheme="light"]) .fireside-like.fireside-liked {
@@ -1420,6 +1568,49 @@ body.fireside-dragging {
   }
   html:not([data-fs-scheme="light"]) .fireside-compose-text::placeholder {
     color: #555;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-editor .ProseMirror {
+    color: #d5d5d5;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-editor .ProseMirror a {
+    color: #7d90a9;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-editor .ProseMirror p.is-editor-empty:first-child::before {
+    color: #555;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-toolbar {
+    border-bottom-color: #2c2c2c;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-fmt-sep {
+    background: #2c2c2c;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-card-content code {
+    background: rgba(255, 255, 255, 0.08);
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-fmt {
+    color: #aaa;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-fmt:hover {
+    background: #262626;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-fmt.is-active {
+    background: rgba(125, 144, 169, 0.15);
+    color: #7d90a9;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-link-input {
+    border-color: #3a3a3a;
+    background: #1c1c1c;
+    color: #d5d5d5;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-link-input:focus {
+    border-color: #7d90a9;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-link-btn {
+    background: #46587c;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-compose-link-btn.is-quiet {
+    background: #262626;
+    color: #999;
   }
   html:not([data-fs-scheme="light"]) .fireside-compose-suggest-item {
     border-color: #3a3a3a;
@@ -1582,7 +1773,8 @@ html[data-fs-scheme="dark"] .fireside-comment-preview__line {
   color: #d5d5d5;
 }
 html[data-fs-scheme="dark"] .fireside-comment-preview__name,
-html[data-fs-scheme="dark"] .fireside-comment-preview__more {
+html[data-fs-scheme="dark"] .fireside-comment-preview__more,
+html[data-fs-scheme="dark"] .fireside-comment-preview__text a {
   color: #7d90a9;
 }
 html[data-fs-scheme="dark"] .fireside-like.fireside-liked {
@@ -1661,6 +1853,49 @@ html[data-fs-scheme="dark"] .fireside-compose-text {
 }
 html[data-fs-scheme="dark"] .fireside-compose-text::placeholder {
   color: #555;
+}
+html[data-fs-scheme="dark"] .fireside-compose-editor .ProseMirror {
+  color: #d5d5d5;
+}
+html[data-fs-scheme="dark"] .fireside-compose-editor .ProseMirror a {
+  color: #7d90a9;
+}
+html[data-fs-scheme="dark"] .fireside-compose-editor .ProseMirror p.is-editor-empty:first-child::before {
+  color: #555;
+}
+html[data-fs-scheme="dark"] .fireside-compose-toolbar {
+  border-bottom-color: #2c2c2c;
+}
+html[data-fs-scheme="dark"] .fireside-compose-fmt-sep {
+  background: #2c2c2c;
+}
+html[data-fs-scheme="dark"] .fireside-card-content code {
+  background: rgba(255, 255, 255, 0.08);
+}
+html[data-fs-scheme="dark"] .fireside-compose-fmt {
+  color: #aaa;
+}
+html[data-fs-scheme="dark"] .fireside-compose-fmt:hover {
+  background: #262626;
+}
+html[data-fs-scheme="dark"] .fireside-compose-fmt.is-active {
+  background: rgba(125, 144, 169, 0.15);
+  color: #7d90a9;
+}
+html[data-fs-scheme="dark"] .fireside-compose-link-input {
+  border-color: #3a3a3a;
+  background: #1c1c1c;
+  color: #d5d5d5;
+}
+html[data-fs-scheme="dark"] .fireside-compose-link-input:focus {
+  border-color: #7d90a9;
+}
+html[data-fs-scheme="dark"] .fireside-compose-link-btn {
+  background: #46587c;
+}
+html[data-fs-scheme="dark"] .fireside-compose-link-btn.is-quiet {
+  background: #262626;
+  color: #999;
 }
 html[data-fs-scheme="dark"] .fireside-compose-suggest-item {
   border-color: #3a3a3a;
@@ -1775,6 +2010,9 @@ html[data-fs-scheme="dark"] .fireside-compose-private {
     grid-template-columns: repeat(3, 1fr);
   }
   .fireside-compose-text {
+    min-height: 30vh;
+  }
+  .fireside-compose-editor .ProseMirror {
     min-height: 30vh;
   }
 }

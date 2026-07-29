@@ -1,0 +1,3 @@
+# pnpm v10：允许运行安装脚本的依赖白名单（esbuild 需下载平台二进制）
+onlyBuiltDependencies:
+  - esbuild

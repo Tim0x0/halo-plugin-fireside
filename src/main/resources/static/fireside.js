@@ -305,9 +305,38 @@
   /* ===== 评论预览（仿朋友圈灰底块，仅列表页模板渲染容器）=====
    * 容器由服务端出骨架（min-height + 可选「查看全部」链接），进入视口后
    * 请求 Halo 公开评论接口取「置顶 + 最新」顶层评论填充；可见性与脱敏
-   * 由接口保证，渲染一律 textContent，评论内容绝不作为 HTML 插入 */
+   * 由接口保证。评论内容可能是富文本 HTML：与官方评论组件同构，先经
+   * DOMPurify 白名单消毒再插入；DOMPurify 缺席时回退纯文本兜底 */
   var COMMENTS_API = '/apis/api.halo.run/v1alpha1/comments';
   var PREVIEW_FETCH_MAX = 100; // 「全部」档（data-limit=-1）的单次抓取兜底上限
+
+  // 白名单对齐官方评论组件（sanitize-html 默认档，无图片/媒体）；
+  // 属性只留 href，防止评论借 class 伪装本插件 UI 元素
+  var PREVIEW_SANITIZE = {
+    ALLOWED_TAGS: ['a', 'p', 'br', 'b', 'strong', 'i', 'em', 'u', 's',
+      'del', 'strike', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li', 'span'],
+    ALLOWED_ATTR: ['href'],
+    ALLOW_DATA_ATTR: false
+  };
+  var purifyHooked = false;
+
+  /** 评论富文本消毒；DOMPurify 不可用时返回 null，调用方回退纯文本 */
+  function sanitizeCommentHtml(html) {
+    if (typeof DOMPurify === 'undefined' || !DOMPurify.isSupported) {
+      return null;
+    }
+    if (!purifyHooked) {
+      purifyHooked = true;
+      // 对齐官方组件 applyLinkAttributes：链接新标签打开并去除权重
+      DOMPurify.addHook('afterSanitizeAttributes', function (node) {
+        if (node.tagName === 'A') {
+          node.setAttribute('target', '_blank');
+          node.setAttribute('rel', 'noopener noreferrer nofollow ugc');
+        }
+      });
+    }
+    return DOMPurify.sanitize(html, PREVIEW_SANITIZE);
+  }
 
   function bindCommentPreviews() {
     var nodes = document.querySelectorAll(
@@ -391,8 +420,17 @@
       owner.className = 'fireside-comment-preview__name';
       owner.textContent = (item.owner && item.owner.displayName) || '匿名';
       line.appendChild(owner);
-      line.appendChild(document.createTextNode(
-        '：' + ((item.spec && item.spec.content) || '')));
+      line.appendChild(document.createTextNode('：'));
+      var raw = (item.spec && item.spec.content) || '';
+      var clean = sanitizeCommentHtml(raw);
+      var text = document.createElement('span');
+      text.className = 'fireside-comment-preview__text';
+      if (clean === null) {
+        text.textContent = raw;
+      } else {
+        text.innerHTML = clean;
+      }
+      line.appendChild(text);
       frag.appendChild(line);
     });
     box.insertBefore(frag, more || null);
@@ -629,10 +667,24 @@
     var submitBtns = Array.prototype.slice.call(
       composeBox.querySelectorAll('.fireside-compose-submit'));
     var tip = document.getElementById('fs-compose-tip');
+    // 富文本工具栏 / 编辑器挂载点 / 链接输入行（编辑器 bundle 就绪前均隐藏）
+    var toolbar = document.getElementById('fs-compose-toolbar');
+    var toolbarBtns = Array.prototype.slice.call(
+      toolbar.querySelectorAll('.fireside-compose-fmt'));
+    var editorMount = document.getElementById('fs-compose-editor');
+    var linkRow = document.getElementById('fs-compose-linkrow');
+    var linkUrlInput = document.getElementById('fs-compose-link-url');
+    var linkTextInput = document.getElementById('fs-compose-link-text');
     // 已选图片：{ file, url, originType, uploading, failed, objectUrl, el }
     // file 是原始 File，仿微信朋友圈到点“发表”才上传；url 上传成功后才有值
     var mediaItems = [];
     var submitting = false;
+    // Tiptap 编辑器包装（fireside-editor.js 首次打开浮层时懒加载创建）；
+    // null = bundle 未就绪或加载失败，走 textarea 纯文本兜底路径
+    var editorWrap = null;
+    var editorLoadState = ''; // '' | 'loading' | 'ready' | 'failed'
+    // 链接输入行打开时是否带着非空选区（决定确定后套选区还是插入新文字）
+    var linkHasSelection = false;
     // 谁可以看：false=公开(PUBLIC)，true=私密(PRIVATE，仅自己登录后可见)
     var isPrivate = false;
     // 标签识别：官方 TagsExtension 同款字符集，必须以空白终止（打完空格才生效）；
@@ -693,6 +745,49 @@
     submitBtns.forEach(function (btn) {
       btn.addEventListener('click', handlePublish);
     });
+    toolbarBtns.forEach(function (btn) {
+      // mousedown 阻止默认，保住编辑器里的选区与焦点（触摸端同样派发）
+      btn.addEventListener('mousedown', function (e) {
+        e.preventDefault();
+      });
+      btn.addEventListener('click', function () {
+        if (!editorWrap || submitting) {
+          return;
+        }
+        var fmt = btn.getAttribute('data-fmt');
+        if (fmt === 'bold') {
+          editorWrap.toggleBold();
+        } else if (fmt === 'italic') {
+          editorWrap.toggleItalic();
+        } else if (fmt === 'strike') {
+          editorWrap.toggleStrike();
+        } else if (fmt === 'code') {
+          editorWrap.toggleCode();
+        } else if (fmt === 'link') {
+          handleLinkButton();
+        } else if (fmt === 'undo') {
+          editorWrap.undo();
+        } else if (fmt === 'redo') {
+          editorWrap.redo();
+        }
+        syncToolbar();
+      });
+    });
+    document.getElementById('fs-compose-link-ok')
+      .addEventListener('click', confirmLink);
+    document.getElementById('fs-compose-link-cancel')
+      .addEventListener('click', closeLinkRow);
+    // 链接行内 Enter 确定、Esc 取消（stopPropagation 拦住关浮层）
+    linkRow.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        confirmLink();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        closeLinkRow();
+      }
+    });
     textInput.addEventListener('compositionstart', function () {
       composing = true;
     });
@@ -716,11 +811,13 @@
       }
     });
     textInput.addEventListener('keydown', handleSuggestKeydown);
-    // 点击输入框与联想条以外的位置时收起联想条（如去点“添加图片”）。
+    // 点击输入区与联想条以外的位置时收起联想条（如去点“添加图片”）。
+    // 编辑器内部点击交给 onSelectionUpdate 按光标语境判定，不在此收起；
     // 点候选项时其自身 click 先于本监听执行，联想条已收起，此处自然空跑
     document.addEventListener('click', function (e) {
       if (!suggestBox.hidden && e.target !== textInput
-        && !suggestBox.contains(e.target)) {
+        && !suggestBox.contains(e.target)
+        && !editorMount.contains(e.target)) {
         hideSuggest();
       }
     });
@@ -729,7 +826,9 @@
     function openCompose() {
       composeBox.hidden = false;
       document.body.style.overflow = 'hidden';
-      textInput.focus();
+      // 首次打开才拉编辑器 bundle；就绪前 textarea 先顶上，可立即打字
+      ensureEditor();
+      focusInput();
     }
 
     function closeCompose() {
@@ -742,6 +841,7 @@
       composeBox.hidden = true;
       document.body.style.overflow = '';
       hideSuggest();
+      closeLinkRow();
     }
 
     function showTip(message, ok) {
@@ -1177,7 +1277,7 @@
 
     /** 标签行 = 正文的实时投影：只展示与删除，不支持行内新增 */
     function syncTagChips() {
-      var tags = parseContentTags(textInput.value);
+      var tags = parseContentTags(sourceText());
       tagsBox.textContent = '';
       if (!tags.length) {
         var empty = document.createElement('span');
@@ -1207,6 +1307,11 @@
      * 重新解析后 chip 自然消失——正文始终是唯一数据源。
      * 标签字符集不含正则元字符，无需转义。 */
     function removeTagFromText(tag) {
+      if (editorWrap) {
+        // 编辑器事务触发 onUpdate → onTextChange，chip 自动重投影
+        editorWrap.removeTag(tag);
+        return;
+      }
       var pattern = new RegExp('(^|\\s)#' + tag + '(?=\\s|$)', 'g');
       textInput.value = textInput.value
         .replace(pattern, '$1')
@@ -1218,6 +1323,9 @@
 
     /** 光标左侧是否正处于未完成的 #片段（# 后 0..n 个合法字符、未敲空白） */
     function currentTagFragment() {
+      if (editorWrap) {
+        return editorWrap.getTagFragment();
+      }
       var pos = textInput.selectionStart;
       if (pos == null) {
         return null;
@@ -1295,6 +1403,12 @@
 
     /** 选中候选：补全片段为完整标签并补上终止空格，光标落在空格后 */
     function applySuggest(tag) {
+      if (editorWrap) {
+        editorWrap.applyTagSuggest(tag);
+        hideSuggest();
+        syncTagChips();
+        return;
+      }
       var pos = textInput.selectionStart;
       var before = textInput.value.slice(0, pos);
       var after = textInput.value.slice(pos);
@@ -1345,17 +1459,295 @@
       }
     }
 
+    /* ===== Tiptap 编辑器（渐进增强）=====
+     * bundle（fireside-editor.js，与瞬间官方编辑器同内核）首次打开浮层时
+     * 懒加载；就绪后隐藏 textarea 换编辑器 + 工具栏，失败则纯文本路径兜底。
+     * schema 只含 p/br/strong/em/s/code/a，粘贴的花哨内容自动降级为纯文本 */
+    function ensureEditor() {
+      if (editorLoadState) {
+        return;
+      }
+      var src = composeBox.getAttribute('data-editor-src');
+      if (!src) {
+        editorLoadState = 'failed';
+        return;
+      }
+      editorLoadState = 'loading';
+      var script = document.createElement('script');
+      script.src = src;
+      script.onload = initEditor;
+      script.onerror = function () {
+        editorLoadState = 'failed';
+        console.warn('[围炉] 编辑器加载失败，发布框以纯文本模式继续');
+      };
+      document.head.appendChild(script);
+    }
+
+    function initEditor() {
+      if (typeof FiresideEditor === 'undefined') {
+        editorLoadState = 'failed';
+        return;
+      }
+      try {
+        editorWrap = FiresideEditor.create({
+          element: editorMount,
+          placeholder: '这一刻的想法…',
+          onUpdate: function () {
+            onTextChange();
+            // 每次编辑都可能改变撤销/重做可用态
+            syncToolbar();
+          },
+          onSelectionUpdate: function () {
+            updateSuggest();
+            syncToolbar();
+          },
+          onKeyDown: editorSuggestKeydown,
+          onPasteFiles: function (files) {
+            if (submitting) {
+              return true;
+            }
+            var images = files.filter(function (f) {
+              return f.type.indexOf('image/') === 0;
+            });
+            if (!images.length) {
+              return false;
+            }
+            images.forEach(addMedia);
+            return true;
+          }
+        });
+      } catch (err) {
+        editorLoadState = 'failed';
+        console.warn('[围炉] 编辑器初始化失败，发布框以纯文本模式继续', err);
+        return;
+      }
+      editorLoadState = 'ready';
+      // 接管 textarea：迁移已敲内容后切换显示（浮层未开也预初始化无妨）
+      if (textInput.value) {
+        editorWrap.setPlainText(textInput.value);
+      }
+      textInput.hidden = true;
+      editorMount.hidden = false;
+      toolbar.hidden = false;
+      if (!composeBox.hidden) {
+        editorWrap.focus();
+      }
+      syncTagChips();
+      syncToolbar();
+    }
+
+    /** 正文纯文本投影：编辑器路径段落/硬换行均映射为 \n，与 textarea 语义一致 */
+    function sourceText() {
+      return editorWrap ? editorWrap.getText() : textInput.value;
+    }
+
+    function focusInput() {
+      if (editorWrap) {
+        editorWrap.focus();
+      } else {
+        textInput.focus();
+      }
+    }
+
+    function syncToolbar() {
+      if (!editorWrap || submitting) {
+        return;
+      }
+      toolbarBtns.forEach(function (btn) {
+        var fmt = btn.getAttribute('data-fmt');
+        if (fmt === 'undo') {
+          btn.disabled = !editorWrap.canUndo();
+        } else if (fmt === 'redo') {
+          btn.disabled = !editorWrap.canRedo();
+        } else {
+          btn.classList.toggle('is-active', editorWrap.isActive(fmt));
+        }
+      });
+    }
+
+    /** 编辑器键盘拦截：联想条可见时接管 ↑↓/Enter/Tab/Esc（语义同 textarea 版） */
+    function editorSuggestKeydown(e) {
+      if (e.isComposing || suggestBox.hidden) {
+        return false;
+      }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        var count = suggestItems.length;
+        if (count) {
+          suggestIndex = (suggestIndex + (e.key === 'ArrowDown' ? 1 : -1) + count) % count;
+          syncSuggestHighlight();
+        }
+        return true;
+      }
+      if (e.key === 'Enter') {
+        if (suggestIndex >= 0 && suggestIndex < suggestItems.length) {
+          applySuggest(suggestItems[suggestIndex]);
+          return true;
+        }
+        return false;
+      }
+      if (e.key === 'Tab' && !e.shiftKey) {
+        if (suggestItems.length) {
+          applySuggest(suggestItems[suggestIndex >= 0 ? suggestIndex : 0]);
+          return true;
+        }
+        return false;
+      }
+      if (e.key === 'Escape') {
+        // 拦住冒泡，避免 document 层的 Esc 把整个浮层关掉（两段式退出）
+        e.stopPropagation();
+        hideSuggest();
+        return true;
+      }
+      return false;
+    }
+
+    /** 链接按钮三态：光标在链接内→整段取消；选中文本是 URL→原地成链；
+     * 其余（选中普通文字 / 无选中）→ 弹输入行 */
+    function handleLinkButton() {
+      if (editorWrap.isActive('link')) {
+        editorWrap.unsetLink();
+        return;
+      }
+      var selected = editorWrap.getSelectedText().replace(/^\s+|\s+$/g, '');
+      var asUrl = normalizeUrl(selected);
+      if (selected && isValidHttpUrl(asUrl)) {
+        editorWrap.setLinkOnSelection(asUrl);
+        return;
+      }
+      openLinkRow(!!selected);
+    }
+
+    function openLinkRow(hasSelection) {
+      linkHasSelection = hasSelection;
+      linkUrlInput.value = '';
+      linkTextInput.value = '';
+      // 带选区打开时显示文字即选区本身，不再要文字
+      linkTextInput.hidden = hasSelection;
+      linkRow.hidden = false;
+      linkUrlInput.focus();
+    }
+
+    function closeLinkRow() {
+      linkRow.hidden = true;
+      linkHasSelection = false;
+      if (editorWrap && !composeBox.hidden) {
+        editorWrap.focus();
+      }
+    }
+
+    function confirmLink() {
+      if (!editorWrap) {
+        return;
+      }
+      var url = normalizeUrl(linkUrlInput.value.replace(/^\s+|\s+$/g, ''));
+      if (!isValidHttpUrl(url)) {
+        showTip('链接地址需以 http(s):// 开头');
+        return;
+      }
+      hideTip();
+      if (linkHasSelection) {
+        editorWrap.setLinkOnSelection(url);
+      } else {
+        var text = linkTextInput.value.replace(/^\s+|\s+$/g, '') || url;
+        editorWrap.insertLinkText(url, text);
+      }
+      closeLinkRow();
+      syncToolbar();
+    }
+
+    /** www. 开头补 https://，其余原样返回（协议校验交给 isValidHttpUrl） */
+    function normalizeUrl(input) {
+      if (/^www\./i.test(input)) {
+        return 'https://' + input;
+      }
+      return input;
+    }
+
+    /** 只放行 http(s) 绝对链接，杜绝 javascript:/data: 注入 */
+    function isValidHttpUrl(input) {
+      if (!/^https?:\/\/\S+$/i.test(input)) {
+        return false;
+      }
+      try {
+        var parsed = new URL(input);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+      } catch (e) {
+        return false;
+      }
+    }
+
+    /** 编辑器 HTML 后处理：把文本中已生效的 #标签 包装为官方格式的
+     * a.tag 节点（与 textToHtml 的包装物一致）；链接内文本跳过 */
+    function decorateTags(html, tags) {
+      if (!html || !tags.length) {
+        return html;
+      }
+      var tagSet = {};
+      tags.forEach(function (t) { tagSet[t] = true; });
+      var doc = new DOMParser().parseFromString(
+        '<div id="root">' + html + '</div>', 'text/html');
+      var root = doc.getElementById('root');
+      var walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+      var textNodes = [];
+      var node;
+      while ((node = walker.nextNode())) {
+        if (!node.parentElement.closest('a')) {
+          textNodes.push(node);
+        }
+      }
+      var wrapPattern = new RegExp('(^|\\s)#(' + TAG_CHARS + '+)(?=\\s|$)', 'g');
+      textNodes.forEach(function (textNode) {
+        var value = textNode.nodeValue;
+        var frag = null;
+        var last = 0;
+        var m;
+        wrapPattern.lastIndex = 0;
+        while ((m = wrapPattern.exec(value)) !== null) {
+          if (!tagSet[m[2]]) {
+            continue;
+          }
+          if (!frag) {
+            frag = doc.createDocumentFragment();
+          }
+          var start = m.index + m[1].length;
+          if (start > last) {
+            frag.appendChild(doc.createTextNode(value.slice(last, start)));
+          }
+          var a = doc.createElement('a');
+          a.className = 'tag';
+          a.setAttribute('href', '/moments?tag=' + encodeURIComponent(m[2]));
+          a.setAttribute('data-pjax', '');
+          a.textContent = m[2];
+          frag.appendChild(a);
+          last = start + 1 + m[2].length;
+        }
+        if (frag) {
+          if (last < value.length) {
+            frag.appendChild(doc.createTextNode(value.slice(last)));
+          }
+          textNode.parentNode.replaceChild(frag, textNode);
+        }
+      });
+      return root.innerHTML;
+    }
+
     function handlePublish() {
       if (submitting || (drag && drag.active)) {
         return;
       }
       // 标签以“已敲空白终止”的原文判定；首尾空白仅在成文时清理，
-      // textToHtml 的 tagSet 门禁保证清理不会弄丢末尾已生效的标签
-      var rawText = textInput.value;
+      // tagSet 门禁保证清理不会弄丢末尾已生效的标签
+      var rawText = sourceText();
       var contentTags = parseContentTags(rawText);
       var text = rawText.replace(/^\s+|\s+$/g, '');
-      if (!text && !mediaItems.length) {
+      var hasText = editorWrap ? !editorWrap.isEmpty() : !!text;
+      if (!hasText && !mediaItems.length) {
         showTip('写点什么，或添加一张图片');
+        return;
+      }
+      // textarea 的 maxlength 编辑器路径没有，发表前统一兜底
+      if (text.length > 5000) {
+        showTip('正文最多 5000 字');
         return;
       }
       submitting = true;
@@ -1464,8 +1856,11 @@
       setSubmitBusy(true);
       // payload 结构与瞬间插件官方 UC 发布组件一致；
       // owner 与 approved 由服务端按当前用户和角色强制覆写；
-      // raw 与 html 同为富文本 HTML（官方模型，后台编辑器直接装载 raw）
-      var contentHtml = textToHtml(text, contentTags);
+      // raw 与 html 同为富文本 HTML（官方模型，后台编辑器直接装载 raw）。
+      // 编辑器路径直接取 Tiptap HTML 再包装 #标签；textarea 兜底走 textToHtml
+      var contentHtml = editorWrap
+        ? (editorWrap.isEmpty() ? '' : decorateTags(editorWrap.getHTML(), contentTags))
+        : textToHtml(text, contentTags);
       var moment = {
         apiVersion: 'moment.halo.run/v1alpha1',
         kind: 'Moment',
@@ -1538,12 +1933,26 @@
      * 已在各自入口用 submitting 挡住） */
     function setComposeLocked(locked) {
       textInput.disabled = locked;
+      if (editorWrap) {
+        editorWrap.setEditable(!locked);
+      }
+      toolbarBtns.forEach(function (btn) {
+        btn.disabled = locked;
+      });
       visibleBtn.disabled = locked;
       addBtn.disabled = locked;
+      if (!locked) {
+        // 解锁后恢复撤销/重做按钮的真实可用态
+        syncToolbar();
+      }
     }
 
     function resetCompose() {
       textInput.value = '';
+      if (editorWrap) {
+        editorWrap.clear();
+      }
+      closeLinkRow();
       isPrivate = false;
       visibleValue.textContent = '公开';
       visibleBtn.classList.remove('is-private');

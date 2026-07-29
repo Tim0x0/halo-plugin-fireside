@@ -255,7 +255,8 @@
          发布走瞬间插件 UC API，服务端按角色决定是否需要审核 -->
     <div id="fs-compose" class="fireside-compose" hidden
          th:if="${display.interaction.effectiveShowComposeEntry()}"
-         sec:authorize="isAuthenticated()">
+         sec:authorize="isAuthenticated()"
+         th:attr="data-editor-src=@{/plugins/plugin-fireside/assets/static/fireside-editor.js?v={version}(version=${pluginVersion})}">
       <div class="fireside-compose-mask" data-compose-close></div>
       <div class="fireside-compose-panel" role="dialog" aria-modal="true" aria-label="发瞬间">
         <!-- 顶栏：移动端仿微信发表页（取消|标题|发表），桌面端对话框（标题|×） -->
@@ -267,8 +268,45 @@
             <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M208.49 191.51a12 12 0 0 1-17 17L128 145l-63.51 63.49a12 12 0 0 1-17-17L111 128L47.51 64.49a12 12 0 0 1 17-17L128 111l63.51-63.52a12 12 0 0 1 17 17L145 128Z"/></svg>
           </button>
         </div>
+        <!-- 格式工具栏：编辑器 bundle（Tiptap 裁剪内核）就绪后显示；
+             加载失败保持隐藏，下方 textarea 纯文本路径兜底 -->
+        <div id="fs-compose-toolbar" class="fireside-compose-toolbar" hidden>
+          <button type="button" class="fireside-compose-fmt" data-fmt="bold" title="加粗">
+            <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M185.08,114.46A48,48,0,0,0,148,36H80A12,12,0,0,0,68,48V200a12,12,0,0,0,12,12h80a52,52,0,0,0,25.08-97.54ZM92,60h56a24,24,0,0,1,0,48H92Zm68,128H92V132h68a28,28,0,0,1,0,56Z"/></svg>
+          </button>
+          <button type="button" class="fireside-compose-fmt" data-fmt="italic" title="斜体">
+            <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M204,56a12,12,0,0,1-12,12H160.65l-40,120H144a12,12,0,0,1,0,24H64a12,12,0,0,1,0-24H95.35l40-120H112a12,12,0,0,1,0-24h80A12,12,0,0,1,204,56Z"/></svg>
+          </button>
+          <button type="button" class="fireside-compose-fmt" data-fmt="strike" title="删除线">
+            <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M228,128a12,12,0,0,1-12,12H185.86A41.48,41.48,0,0,1,196,168c0,14.45-7.81,28.32-21.43,38.05C162,215.05,145.44,220,128,220s-34-4.95-46.57-13.95C67.81,196.32,60,182.45,60,168a12,12,0,0,1,24,0c0,15.18,20.15,28,44,28s44-12.82,44-28c0-12.76-9.3-20.18-35.35-28H40a12,12,0,0,1,0-24H216A12,12,0,0,1,228,128ZM75.11,100a12,12,0,0,0,12-12c0-16,17.58-28,40.89-28,17.36,0,31.37,6.65,37.48,17.78a12,12,0,0,0,21-11.56C176.13,47.3,154.25,36,128,36,91,36,63.11,58.35,63.11,88A12,12,0,0,0,75.11,100Z"/></svg>
+          </button>
+          <button type="button" class="fireside-compose-fmt" data-fmt="code" title="行内代码">
+            <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M71.68,97.22,34.74,128l36.94,30.78a12,12,0,1,1-15.36,18.44l-48-40a12,12,0,0,1,0-18.44l48-40A12,12,0,0,1,71.68,97.22Zm176,21.56-48-40a12,12,0,1,0-15.36,18.44L221.26,128l-36.94,30.78a12,12,0,1,0,15.36,18.44l48-40a12,12,0,0,0,0-18.44ZM164.1,28.72a12,12,0,0,0-15.38,7.18l-64,176a12,12,0,0,0,7.18,15.37A11.79,11.79,0,0,0,96,228a12,12,0,0,0,11.28-7.9l64-176A12,12,0,0,0,164.1,28.72Z"/></svg>
+          </button>
+          <button type="button" class="fireside-compose-fmt" data-fmt="link" title="链接">
+            <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M117.18,188.74a12,12,0,0,1,0,17l-5.12,5.12A58.26,58.26,0,0,1,70.6,228h0A58.62,58.62,0,0,1,29.14,127.92L63.89,93.17a58.64,58.64,0,0,1,98.56,28.11,12,12,0,1,1-23.37,5.44,34.65,34.65,0,0,0-58.22-16.58L46.11,144.89A34.62,34.62,0,0,0,70.57,204h0a34.41,34.41,0,0,0,24.49-10.14l5.11-5.12A12,12,0,0,1,117.18,188.74ZM226.83,45.17a58.65,58.65,0,0,0-82.93,0l-5.11,5.11a12,12,0,0,0,17,17l5.12-5.12a34.63,34.63,0,1,1,49,49L175.1,145.86A34.39,34.39,0,0,1,150.61,156h0a34.63,34.63,0,0,1-33.69-26.72,12,12,0,0,0-23.38,5.44A58.64,58.64,0,0,0,150.56,180h.05a58.28,58.28,0,0,0,41.47-17.17l34.75-34.75a58.62,58.62,0,0,0,0-82.91Z"/></svg>
+          </button>
+          <span class="fireside-compose-fmt-sep" aria-hidden="true"></span>
+          <button type="button" class="fireside-compose-fmt" data-fmt="undo" title="撤销">
+            <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M228,128a100,100,0,0,1-98.66,100H128a99.39,99.39,0,0,1-68.62-27.29,12,12,0,0,1,16.48-17.45,76,76,0,1,0-1.57-109c-.13.13-.25.25-.39.37L54.89,92H72a12,12,0,0,1,0,24H24a12,12,0,0,1-12-12V56a12,12,0,0,1,24,0V76.72L57.48,57.06A100,100,0,0,1,228,128Z"/></svg>
+          </button>
+          <button type="button" class="fireside-compose-fmt" data-fmt="redo" title="重做">
+            <svg class="fireside-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M244,56v48a12,12,0,0,1-12,12H184a12,12,0,1,1,0-24H201.1l-19-17.38c-.13-.12-.26-.24-.38-.37A76,76,0,1,0,127,204h1a75.53,75.53,0,0,0,52.15-20.72,12,12,0,0,1,16.49,17.45A99.45,99.45,0,0,1,128,228h-1.37A100,100,0,1,1,198.51,57.06L220,76.72V56a12,12,0,0,1,24,0Z"/></svg>
+          </button>
+        </div>
+        <!-- 链接输入行：选中普通文字或无选中时点「链接」弹出 -->
+        <div id="fs-compose-linkrow" class="fireside-compose-linkrow" hidden>
+          <input type="url" id="fs-compose-link-url" class="fireside-compose-link-input"
+                 placeholder="链接地址（https://…）" autocomplete="off">
+          <input type="text" id="fs-compose-link-text" class="fireside-compose-link-input"
+                 placeholder="显示文字（选填）" autocomplete="off">
+          <button type="button" id="fs-compose-link-ok" class="fireside-compose-link-btn">确定</button>
+          <button type="button" id="fs-compose-link-cancel" class="fireside-compose-link-btn is-quiet">取消</button>
+        </div>
         <textarea id="fs-compose-text" class="fireside-compose-text" rows="4"
                   maxlength="5000" placeholder="这一刻的想法…"></textarea>
+        <!-- Tiptap 编辑器挂载点：bundle 就绪后接替上方 textarea -->
+        <div id="fs-compose-editor" class="fireside-compose-editor" hidden></div>
         <!-- 标签联想条：正文打 #xx 未完成时浮现（UC 标签接口），点选或 ↑↓+Enter 补全 -->
         <div id="fs-compose-suggest" class="fireside-compose-suggest" hidden></div>
         <!-- 图片九宫格：预览项由 JS 注入到添加按钮之前，走 Halo UC 附件上传 -->
@@ -311,7 +349,9 @@
       </button>
     </div>
 
-    <!-- JS：点赞 / 评论预览 / 富链接 / 发瞬间等交互 -->
+    <!-- JS：点赞 / 评论预览 / 富链接 / 发瞬间等交互；
+         DOMPurify 供评论预览按官方评论组件同款白名单消毒富文本 -->
+    <script th:src="@{/plugins/plugin-fireside/assets/static/purify.min.js?v={version}(version=${pluginVersion})}"></script>
     <script th:src="@{/plugins/plugin-fireside/assets/static/fireside.js?v={version}(version=${pluginVersion})}"></script>
   </main>
 </body>
