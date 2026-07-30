@@ -1170,18 +1170,49 @@ a.fireside-action {
   -webkit-touch-callout: none;
   -webkit-user-drag: none;
 }
-.fireside-compose-item.is-uploading img {
-  opacity: 0.45;
-}
-.fireside-compose-item.is-uploading::after {
-  content: '上传中…';
+/* 上传遮罩：默认隐藏。
+   is-pending = 排队等待（只深遮罩，无环）；
+   is-uploading = 正在传（深遮罩 + 中央白环） */
+.fireside-compose-upload-mask {
   position: absolute;
   inset: 0;
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
-  color: #666;
+  background: rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  z-index: 1;
+}
+.fireside-compose-item.is-pending .fireside-compose-upload-mask,
+.fireside-compose-item.is-uploading .fireside-compose-upload-mask {
+  display: flex;
+}
+/* 排队态不显示进度环，只保留深色蒙层表示「还没传完」 */
+.fireside-compose-item.is-pending .fireside-compose-progress-ring {
+  display: none;
+}
+/* 进度环：外圈 conic 弧，内孔 dig 出透明心（mask 挖空） */
+.fireside-compose-progress-ring {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: conic-gradient(#fff 0%, rgba(255, 255, 255, 0.25) 0% 100%);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  flex-shrink: 0;
+}
+/* 尚无字节进度时：转圈不确定态 */
+.fireside-compose-progress-ring.is-indeterminate {
+  background: conic-gradient(
+    from 0deg,
+    rgba(255, 255, 255, 0.15) 0deg,
+    #fff 120deg,
+    rgba(255, 255, 255, 0.15) 240deg
+  );
+  animation: fireside-compose-spin 0.85s linear infinite;
+}
+@keyframes fireside-compose-spin {
+  to { transform: rotate(360deg); }
 }
 .fireside-compose-item.is-failed {
   outline: 2px solid #e64340;
@@ -1198,6 +1229,7 @@ a.fireside-action {
   font-size: 11px;
   color: #fff;
   background: rgba(230, 67, 64, 0.85);
+  z-index: 2;
 }
 /* 拖拽排序（仿微信朋友圈）：原格子降透明度占位，浮影脱离文档流跟手；
    浮影必须 pointer-events:none，命中检测才能穿透到其下方的真实格子 */
@@ -1224,11 +1256,15 @@ body.fireside-dragging {
   -webkit-user-select: none;
   user-select: none;
 }
+.fireside-compose-item.is-pending .fireside-compose-remove,
+.fireside-compose-item.is-uploading .fireside-compose-remove {
+  display: none;
+}
 .fireside-compose-remove {
   position: absolute;
   top: 4px;
   right: 4px;
-  z-index: 1;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1368,7 +1404,7 @@ body.fireside-dragging {
 .fireside-compose-uc:hover {
   color: #576b95;
 }
-/* 发表按钮（顶栏右侧）：微信绿 */
+/* 发表按钮（顶栏右侧）：微信绿；禁用态仿微信变灰，文案始终「发表」 */
 .fireside-compose-submit {
   padding: 6px 16px;
   border: none;
@@ -1379,11 +1415,13 @@ body.fireside-dragging {
   font-weight: 500;
   cursor: pointer;
 }
-.fireside-compose-submit:hover {
+.fireside-compose-submit:hover:not(:disabled) {
   background: #06ad56;
 }
 .fireside-compose-submit:disabled {
-  opacity: 0.55;
+  background: #c6c6c6;
+  color: #fff;
+  opacity: 1;
   cursor: default;
 }
 
@@ -1660,8 +1698,9 @@ body.fireside-dragging {
   html:not([data-fs-scheme="light"]) .fireside-compose-item {
     background: #1e1e1e;
   }
-  html:not([data-fs-scheme="light"]) .fireside-compose-item.is-uploading::after {
-    color: #aaa;
+  html:not([data-fs-scheme="light"]) .fireside-compose-submit:disabled {
+    background: #3a3a3a;
+    color: #8a8a8a;
   }
   html:not([data-fs-scheme="light"]) .fireside-compose-add {
     border-color: #3a3a3a;
@@ -1945,8 +1984,9 @@ html[data-fs-scheme="dark"] .fireside-compose-tag-remove:hover {
 html[data-fs-scheme="dark"] .fireside-compose-item {
   background: #1e1e1e;
 }
-html[data-fs-scheme="dark"] .fireside-compose-item.is-uploading::after {
-  color: #aaa;
+html[data-fs-scheme="dark"] .fireside-compose-submit:disabled {
+  background: #3a3a3a;
+  color: #8a8a8a;
 }
 html[data-fs-scheme="dark"] .fireside-compose-add {
   border-color: #3a3a3a;

@@ -1038,6 +1038,13 @@
       img.alt = '';
       // 禁掉浏览器原生的图片拖拽，避免抢占自定义拖拽排序的指针流
       img.draggable = false;
+      // 上传遮罩 + 进度环（仿微信朋友圈：深色蒙层中央白环）
+      var mask = document.createElement('div');
+      mask.className = 'fireside-compose-upload-mask';
+      mask.setAttribute('aria-hidden', 'true');
+      var ring = document.createElement('div');
+      ring.className = 'fireside-compose-progress-ring is-indeterminate';
+      mask.appendChild(ring);
       var remove = document.createElement('button');
       remove.type = 'button';
       remove.className = 'fireside-compose-remove';
@@ -1057,6 +1064,7 @@
         syncAddButton();
       });
       cell.appendChild(img);
+      cell.appendChild(mask);
       cell.appendChild(remove);
       cell.addEventListener('pointerdown', function (e) {
         onCellPointerDown(item, e);
@@ -1899,6 +1907,8 @@
         return;
       }
       submitting = true;
+      // 一点发表就灰掉按钮（有无待传图都一样），文案始终「发表」
+      setSubmitBusy(true);
       setComposeLocked(true);
       hideTip();
       // 仿微信朋友圈：点发表才把图片逐张上传，全部就位再创建瞬间；
@@ -1908,6 +1918,8 @@
           submitting = false;
           setSubmitBusy(false);
           setComposeLocked(false);
+          // 失败张已标 is-failed；清掉其余可能残留的排队遮罩
+          clearMediaUploadClasses();
           showUploadFailure(failures);
           return;
         }
@@ -1916,8 +1928,10 @@
     }
 
     /** 把还没有 permalink 的图片按九宫格槽位顺序逐张上传（微信同款：
-     * 轮到哪张哪张亮“上传中…”，一张完成再传下一张）；中途失败不打断
-     * 后续张，全部结束后统一回调失败错误列表 */
+     * 轮到哪张哪张亮进度环，一张完成再传下一张）；中途失败不打断
+     * 后续张，全部结束后统一回调失败错误列表。
+     * 进度只体现在缩略图上，右上角「发表」仅变灰禁用，不改文案。
+     * 批量开始时所有待传先盖等待遮罩，轮到谁再切进度环 */
     function uploadPendingMedia(done) {
       var pending = mediaItems.filter(function (m) { return !m.url; });
       if (!pending.length) {
@@ -1928,11 +1942,14 @@
       var finished = 0;
       var failures = [];
       var cursor = 0;
+      // 全部待传先进入排队态（深遮罩、无环），避免串行时后面几张看起来像已完成
       pending.forEach(function (m) {
         m.failed = false;
-        m.el.classList.remove('is-failed');
+        m.uploading = false;
+        m.el.classList.remove('is-failed', 'is-uploading');
+        m.el.classList.add('is-pending');
+        setMediaProgress(m, 0);
       });
-      setSubmitBusy(true, '上传图片 0/' + total + '…');
       function next() {
         if (cursor >= pending.length) {
           return;
@@ -1942,7 +1959,6 @@
           if (err) {
             failures.push(err);
           }
-          setSubmitBusy(true, '上传图片 ' + finished + '/' + total + '…');
           if (finished === total) {
             done(failures);
           } else {
@@ -1953,38 +1969,120 @@
       next();
     }
 
-    /** 单张图片经 Halo UC 附件接口上传，成功后把 permalink 记回 item */
+    /** 清掉非失败项上的上传/排队 class（失败项保留 is-failed） */
+    function clearMediaUploadClasses() {
+      mediaItems.forEach(function (m) {
+        if (!m.el) {
+          return;
+        }
+        m.uploading = false;
+        m.el.classList.remove('is-uploading', 'is-pending');
+      });
+    }
+
+    /** 缩略图进度环：0–100；无数值时走不确定转圈。
+     * 不确定态必须清掉 inline background，否则会盖住 CSS 转圈渐变 */
+    function setMediaProgress(item, percent) {
+      if (!item || !item.el) {
+        return;
+      }
+      var ring = item.el.querySelector('.fireside-compose-progress-ring');
+      if (!ring) {
+        return;
+      }
+      var p = typeof percent === 'number' ? Math.max(0, Math.min(100, percent)) : 0;
+      if (p <= 0) {
+        ring.classList.add('is-indeterminate');
+        ring.style.background = '';
+        return;
+      }
+      ring.classList.remove('is-indeterminate');
+      // conic-gradient 画弧：已完成段白色，剩余段半透明白
+      ring.style.background =
+        'conic-gradient(#fff ' + p + '%, rgba(255,255,255,0.25) ' + p + '% 100%)';
+    }
+
+    /** 单张图片经 Halo UC 附件接口上传（XHR 以便拿到真实字节进度），
+     * 成功后把 permalink 记回 item；从排队态切到上传中（显示进度环） */
     function uploadOne(item, cb) {
       item.uploading = true;
+      item.failed = false;
+      item.el.classList.remove('is-failed', 'is-pending');
       item.el.classList.add('is-uploading');
+      setMediaProgress(item, 0);
+
       var form = new FormData();
       form.append('file', item.file);
-      fetch(UC_UPLOAD_API, { method: 'POST', body: form })
-        .then(function (res) {
-          if (!res.ok) {
-            throw Object.assign(new Error('HTTP ' + res.status), { status: res.status });
-          }
-          return res.json();
-        })
-        .then(function (attachment) {
-          // 上传接口保证返回前已解析好 permalink（即图片最终 URL）
-          var permalink = attachment && attachment.status && attachment.status.permalink;
-          if (!permalink) {
-            throw new Error('响应缺少 permalink');
-          }
-          item.url = permalink;
-          item.uploading = false;
-          item.el.classList.remove('is-uploading');
-          cb(null);
-        })
-        .catch(function (err) {
-          item.uploading = false;
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', UC_UPLOAD_API);
+      // 与页面同源 cookie 会话保持一致
+      xhr.withCredentials = true;
+
+      xhr.upload.onprogress = function (e) {
+        if (e.lengthComputable && e.total > 0) {
+          setMediaProgress(item, (e.loaded / e.total) * 100);
+        } else {
+          // 服务端未回传总量时保持不确定转圈
+          setMediaProgress(item, 0);
+        }
+      };
+
+      xhr.onload = function () {
+        item.uploading = false;
+        item.el.classList.remove('is-uploading', 'is-pending');
+        var status = xhr.status;
+        if (status < 200 || status >= 300) {
           item.failed = true;
-          item.el.classList.remove('is-uploading');
           item.el.classList.add('is-failed');
-          console.warn('[围炉] 图片上传失败', err);
-          cb(err || new Error('上传失败'));
-        });
+          var httpErr = Object.assign(new Error('HTTP ' + status), { status: status });
+          console.warn('[围炉] 图片上传失败', httpErr);
+          cb(httpErr);
+          return;
+        }
+        var attachment;
+        try {
+          attachment = JSON.parse(xhr.responseText || '{}');
+        } catch (parseErr) {
+          item.failed = true;
+          item.el.classList.add('is-failed');
+          console.warn('[围炉] 图片上传响应解析失败', parseErr);
+          cb(parseErr || new Error('响应解析失败'));
+          return;
+        }
+        // 上传接口保证返回前已解析好 permalink（即图片最终 URL）
+        var permalink = attachment && attachment.status && attachment.status.permalink;
+        if (!permalink) {
+          item.failed = true;
+          item.el.classList.add('is-failed');
+          var missing = new Error('响应缺少 permalink');
+          console.warn('[围炉] 图片上传失败', missing);
+          cb(missing);
+          return;
+        }
+        item.url = permalink;
+        setMediaProgress(item, 100);
+        cb(null);
+      };
+
+      xhr.onerror = function () {
+        item.uploading = false;
+        item.failed = true;
+        item.el.classList.remove('is-uploading', 'is-pending');
+        item.el.classList.add('is-failed');
+        var netErr = new Error('网络错误');
+        console.warn('[围炉] 图片上传失败', netErr);
+        cb(netErr);
+      };
+
+      xhr.onabort = function () {
+        item.uploading = false;
+        item.failed = true;
+        item.el.classList.remove('is-uploading', 'is-pending');
+        item.el.classList.add('is-failed');
+        cb(new Error('上传已取消'));
+      };
+
+      xhr.send(form);
     }
 
     /** 权限/配置类错误给定向提示（文案与旧“选图即传”版一致），其余按张数汇总 */
@@ -2001,6 +2099,7 @@
     }
 
     function publishMoment(text, contentTags) {
+      // 按钮在 handlePublish 已灰；此处再调一次保证无图路径也一致
       setSubmitBusy(true);
       // payload 结构与瞬间插件官方 UC 发布组件一致；
       // owner 与 approved 由服务端按当前用户和角色强制覆写；
@@ -2069,10 +2168,11 @@
         });
     }
 
-    function setSubmitBusy(busy, label) {
+    /** 发表/上传进行中：按钮保持「发表」文案，仅 disabled 变灰（仿微信） */
+    function setSubmitBusy(busy) {
       submitBtns.forEach(function (btn) {
         btn.disabled = busy;
-        btn.textContent = busy ? (label || '发表中…') : '发表';
+        btn.textContent = '发表';
       });
     }
 
