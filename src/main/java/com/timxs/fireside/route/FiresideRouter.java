@@ -5,13 +5,17 @@ import static org.springframework.web.reactive.function.server.RouterFunctions.r
 
 import com.timxs.fireside.config.DisplayConfig;
 import com.timxs.fireside.finders.impl.FiresideFinderImpl;
+import com.timxs.fireside.vo.FiresideMomentVo;
 import com.timxs.fireside.vo.FiresideTagVo;
 import com.timxs.fireside.vo.FiresideTimelineSlice;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
+import org.jsoup.Jsoup;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.reactive.function.server.RouterFunction;
 import org.springframework.web.reactive.function.server.ServerRequest;
@@ -80,14 +84,70 @@ public class FiresideRouter {
                 .flatMap(moment -> templateNameResolver
                     .resolveTemplateNameOrDefault(request.exchange(), "fireside-detail")
                     .flatMap(templateName -> ServerResponse.ok()
-                        .render(templateName, Map.of(
-                            "moment", moment,
-                            TEMPLATE_ID, "fireside-detail",
-                            "display", display,
-                            "pluginVersion", pluginContext.getVersion()
-                        ))))
+                        .render(templateName, buildDetailModel(moment, display))))
                 .switchIfEmpty(Mono.error(() -> new ResponseStatusException(
                     HttpStatus.NOT_FOUND, "Moment not found: " + name))));
+    }
+
+    /**
+     * 详情页 model：在列表字段之外附加 seoDescription / seoImage
+     * （正文纯文本摘要 + 首张图片；空串表示模板不输出对应 meta）。
+     */
+    private Map<String, Object> buildDetailModel(FiresideMomentVo moment,
+        DisplayConfig display) {
+        Map<String, Object> model = new HashMap<>();
+        model.put("moment", moment);
+        model.put(TEMPLATE_ID, "fireside-detail");
+        model.put("display", display);
+        model.put("pluginVersion", pluginContext.getVersion());
+        model.put("seoDescription", seoDescriptionOf(moment));
+        model.put("seoImage", seoImageOf(moment));
+        return model;
+    }
+
+    /**
+     * 详情分享描述：优先 HTML 抽纯文本，否则回退 raw；压空白后截到约 160 字。
+     */
+    static String seoDescriptionOf(FiresideMomentVo moment) {
+        var content = moment == null || moment.getSpec() == null
+            ? null : moment.getSpec().getContent();
+        if (content == null) {
+            return "";
+        }
+        String text = "";
+        if (StringUtils.isNotBlank(content.getHtml())) {
+            text = Jsoup.parse(content.getHtml()).text();
+        }
+        if (StringUtils.isBlank(text)) {
+            text = StringUtils.defaultString(content.getRaw());
+        }
+        text = StringUtils.normalizeSpace(text);
+        if (text.isEmpty()) {
+            return "";
+        }
+        return StringUtils.abbreviate(text, 160);
+    }
+
+    /**
+     * 详情分享图：媒体列表中第一张 PHOTO/POST（或未标类型的）图片 URL；无则空串。
+     */
+    static String seoImageOf(FiresideMomentVo moment) {
+        var content = moment == null || moment.getSpec() == null
+            ? null : moment.getSpec().getContent();
+        List<FiresideMomentVo.MediaVo> medium =
+            content == null || content.getMedium() == null ? List.of() : content.getMedium();
+        for (FiresideMomentVo.MediaVo item : medium) {
+            if (item == null || StringUtils.isBlank(item.getUrl())) {
+                continue;
+            }
+            var type = item.getType();
+            if (type == null
+                || type == FiresideMomentVo.MediaType.PHOTO
+                || type == FiresideMomentVo.MediaType.POST) {
+                return item.getUrl().trim();
+            }
+        }
+        return "";
     }
 
     /**

@@ -46,12 +46,12 @@ spec:
             - $formkit: attachment
               name: coverImage
               label: 封面图
-              help: 内置 /fireside 页面顶部的朋友圈式封面图，建议横图；留空则使用默认深色底
+              help: 内置 /fireside 页面顶部的朋友圈式封面图，建议横图；同时用作列表页分享预览图（og:image）。留空则用默认深色底，且不输出分享图
             - $formkit: textarea
               name: signature
               label: 签名
               rows: 2
-              help: 显示在封面下方、头像一侧（仿朋友圈签名位），可填站点的一句话描述，如「记录生活中的点滴瞬间」；留空则不显示
+              help: 显示在封面下方、头像一侧（仿朋友圈签名位），可填站点的一句话描述，如「记录生活中的点滴瞬间」；同时用作列表页 SEO / 分享描述。留空则不显示签名，且不输出描述
             - $formkit: radio
               name: colorScheme
               label: 配色方案

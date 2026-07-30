@@ -26,6 +26,29 @@
     })();
   </script>
   <title th:text="${display.effectivePageTitle() + ' ' + display.effectiveTitleSeparator() + ' ' + site.title}">围炉</title>
+  <!-- SEO / 分享：描述←签名、预览图←封面；有则输出、空则不加 -->
+  <meta th:if="${!#strings.isEmpty(display.appearance.effectiveSeoDescription())}"
+        name="description"
+        th:content="${display.appearance.effectiveSeoDescription()}">
+  <meta property="og:type" content="website">
+  <meta property="og:title"
+        th:content="${display.effectivePageTitle() + ' ' + display.effectiveTitleSeparator() + ' ' + site.title}">
+  <meta th:if="${!#strings.isEmpty(display.appearance.effectiveSeoDescription())}"
+        property="og:description"
+        th:content="${display.appearance.effectiveSeoDescription()}">
+  <meta th:if="${!#strings.isEmpty(display.appearance.effectiveSeoImage())}"
+        property="og:image"
+        th:content="${display.appearance.effectiveSeoImage()}">
+  <meta name="twitter:card"
+        th:content="${!#strings.isEmpty(display.appearance.effectiveSeoImage())} ? 'summary_large_image' : 'summary'">
+  <meta name="twitter:title"
+        th:content="${display.effectivePageTitle() + ' ' + display.effectiveTitleSeparator() + ' ' + site.title}">
+  <meta th:if="${!#strings.isEmpty(display.appearance.effectiveSeoDescription())}"
+        name="twitter:description"
+        th:content="${display.appearance.effectiveSeoDescription()}">
+  <meta th:if="${!#strings.isEmpty(display.appearance.effectiveSeoImage())}"
+        name="twitter:image"
+        th:content="${display.appearance.effectiveSeoImage()}">
   <link rel="icon" type="image/x-icon" th:href="${site.favicon}">
   <link rel="stylesheet"
         th:href="@{/plugins/plugin-fireside/assets/static/fireside.css?v={version}(version=${pluginVersion})}">

@@ -100,11 +100,13 @@ public class DisplayConfig {
 
         /**
          * 内置页面顶部的朋友圈式封面图 URL；空则模板使用默认深色底。
+         * 同时作为列表页分享预览图（og:image）；空则不输出。
          */
         private String coverImage;
 
         /**
          * 封面下方的签名（仿朋友圈签名位，通常填站点一句话描述）；空则不显示。
+         * 同时作为列表页 SEO / 分享描述；空则不输出 meta description。
          */
         private String signature;
 
@@ -132,6 +134,25 @@ public class DisplayConfig {
          */
         public boolean effectiveAllowSchemeToggle() {
             return !Boolean.FALSE.equals(allowSchemeToggle);
+        }
+
+        /**
+         * 列表页 SEO / 分享描述：取自签名，压空白后截到约 160 字；
+         * 签名为空时返回空串，模板据此决定是否输出 meta。
+         */
+        public String effectiveSeoDescription() {
+            String value = StringUtils.normalizeSpace(StringUtils.trimToEmpty(signature));
+            if (value.isEmpty()) {
+                return "";
+            }
+            return StringUtils.abbreviate(value, 160);
+        }
+
+        /**
+         * 列表页分享预览图：有封面则原样返回，否则空串（模板不输出 og:image）。
+         */
+        public String effectiveSeoImage() {
+            return StringUtils.trimToEmpty(coverImage);
         }
     }
 
