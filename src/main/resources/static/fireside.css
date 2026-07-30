@@ -254,9 +254,49 @@ body {
 /* ===== 正文 ===== */
 .fireside-card-content {
   margin-bottom: 8px;
-  color: #1a1a1a;
+  color: #333;
+  line-height: 1.6;
   word-break: break-word;
   overflow-wrap: break-word;
+}
+/* 列表长文折叠：JS 包 __body；line-clamp 按行裁切 */
+.fireside-card-content__body {
+  min-width: 0;
+  line-height: 1.6;
+}
+.fireside-card-content.is-collapsed .fireside-card-content__body {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  line-clamp: 6;
+  overflow: hidden;
+}
+.fireside-card-content.is-expanded .fireside-card-content__body {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow: visible;
+}
+.fireside-content-toggle {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #576b95;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.6;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.fireside-content-toggle:hover {
+  opacity: 0.85;
+}
+.fireside-content-toggle:focus-visible {
+  outline: 2px solid rgba(87, 107, 149, 0.45);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 .fireside-card-content p {
   margin: 0 0 8px;
@@ -566,13 +606,18 @@ body {
   display: block;
 }
 
-/* 复制成功反馈：图标切换为文字提示 */
-.fireside-copy.fireside-copied .fireside-icon {
+/* 复制成功：链接图标换成对勾 */
+.fireside-copy .fireside-icon-check {
   display: none;
 }
-.fireside-copy.fireside-copied::before {
-  content: '✓ 已复制';
+.fireside-copy.fireside-copied {
   color: #07c160;
+}
+.fireside-copy.fireside-copied .fireside-icon-link {
+  display: none;
+}
+.fireside-copy.fireside-copied .fireside-icon-check {
+  display: block;
 }
 
 /* ===== 页脚 ===== */
@@ -724,7 +769,7 @@ html[data-fs-scheme="dark"] .fireside-scheme-moon {
 /* 单条：昵称蓝不加粗 + 全角冒号 + 正文连排，换行不缩进 */
 .fireside-comment-preview__line {
   margin: 0;
-  color: #1a1a1a;
+  color: #333;
   word-break: break-word;
   overflow-wrap: break-word;
 }
@@ -1170,9 +1215,7 @@ a.fireside-action {
   -webkit-touch-callout: none;
   -webkit-user-drag: none;
 }
-/* 上传遮罩：默认隐藏。
-   is-pending = 排队等待（只深遮罩，无环）；
-   is-uploading = 正在传（深遮罩 + 中央白环） */
+/* 上传遮罩：pending 仅蒙层，uploading 蒙层+进度环 */
 .fireside-compose-upload-mask {
   position: absolute;
   inset: 0;
@@ -1187,11 +1230,10 @@ a.fireside-action {
 .fireside-compose-item.is-uploading .fireside-compose-upload-mask {
   display: flex;
 }
-/* 排队态不显示进度环，只保留深色蒙层表示「还没传完」 */
 .fireside-compose-item.is-pending .fireside-compose-progress-ring {
   display: none;
 }
-/* 进度环：外圈 conic 弧，内孔 dig 出透明心（mask 挖空） */
+/* 进度环：conic 弧 + mask 挖空 */
 .fireside-compose-progress-ring {
   width: 28px;
   height: 28px;
@@ -1201,7 +1243,6 @@ a.fireside-action {
   mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
   flex-shrink: 0;
 }
-/* 尚无字节进度时：转圈不确定态 */
 .fireside-compose-progress-ring.is-indeterminate {
   background: conic-gradient(
     from 0deg,
@@ -1404,7 +1445,7 @@ body.fireside-dragging {
 .fireside-compose-uc:hover {
   color: #576b95;
 }
-/* 发表按钮（顶栏右侧）：微信绿；禁用态仿微信变灰，文案始终「发表」 */
+/* 发表按钮：微信绿；禁用仅变灰 */
 .fireside-compose-submit {
   padding: 6px 16px;
   border: none;
@@ -1544,6 +1585,9 @@ body.fireside-dragging {
   }
   html:not([data-fs-scheme="light"]) .fireside-like.fireside-liked {
     color: #e64340;
+  }
+  html:not([data-fs-scheme="light"]) .fireside-copy.fireside-copied {
+    color: #07c160;
   }
   html:not([data-fs-scheme="light"]) .fireside-back {
     color: #7d90a9;
@@ -1830,6 +1874,9 @@ html[data-fs-scheme="dark"] .fireside-comment-preview__text a {
 }
 html[data-fs-scheme="dark"] .fireside-like.fireside-liked {
   color: #e64340;
+}
+html[data-fs-scheme="dark"] .fireside-copy.fireside-copied {
+  color: #07c160;
 }
 html[data-fs-scheme="dark"] .fireside-back {
   color: #7d90a9;

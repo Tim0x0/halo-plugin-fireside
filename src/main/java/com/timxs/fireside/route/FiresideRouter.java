@@ -89,10 +89,7 @@ public class FiresideRouter {
                     HttpStatus.NOT_FOUND, "Moment not found: " + name))));
     }
 
-    /**
-     * 详情页 model：在列表字段之外附加 seoDescription / seoImage
-     * （正文纯文本摘要 + 首张图片；空串表示模板不输出对应 meta）。
-     */
+    /** 详情 model：附加 seoDescription（正文摘要）、seoImage（首图，可为相对路径）。 */
     private Map<String, Object> buildDetailModel(FiresideMomentVo moment,
         DisplayConfig display) {
         Map<String, Object> model = new HashMap<>();
@@ -105,9 +102,7 @@ public class FiresideRouter {
         return model;
     }
 
-    /**
-     * 详情分享描述：优先 HTML 抽纯文本，否则回退 raw；压空白后截到约 160 字。
-     */
+    /** 详情分享描述：HTML 纯文本优先，否则 raw；约 160 字。 */
     static String seoDescriptionOf(FiresideMomentVo moment) {
         var content = moment == null || moment.getSpec() == null
             ? null : moment.getSpec().getContent();
@@ -122,15 +117,10 @@ public class FiresideRouter {
             text = StringUtils.defaultString(content.getRaw());
         }
         text = StringUtils.normalizeSpace(text);
-        if (text.isEmpty()) {
-            return "";
-        }
-        return StringUtils.abbreviate(text, 160);
+        return text.isEmpty() ? "" : StringUtils.abbreviate(text, 160);
     }
 
-    /**
-     * 详情分享图：媒体列表中第一张 PHOTO/POST（或未标类型的）图片 URL；无则空串。
-     */
+    /** 详情分享图：medium 中首张 PHOTO/POST（或未标类型）；无则空串。 */
     static String seoImageOf(FiresideMomentVo moment) {
         var content = moment == null || moment.getSpec() == null
             ? null : moment.getSpec().getContent();

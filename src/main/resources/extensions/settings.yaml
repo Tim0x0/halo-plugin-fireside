@@ -11,11 +11,11 @@ spec:
           name: pageTitle
           label: 页面标题
           value: 围炉
-          help: 内置 /fireside 页面的标题，留空则使用默认值「围炉」
+          help: 内置 /fireside 页标题，留空为「围炉」
         - $formkit: text
           name: detailPageTitle
           label: 详情页标题
-          help: 详情页顶栏与浏览器标题使用的名称，留空则跟随页面标题
+          help: 详情页顶栏与浏览器标题，留空则跟随页面标题
         - $formkit: radio
           name: titleSeparator
           label: 标题分隔符
@@ -25,7 +25,7 @@ spec:
               value: '-'
             - label: '|'
               value: '|'
-          help: 浏览器标签页标题的分隔符，如「围炉 - 站点名」或「围炉 | 站点名」
+          help: 浏览器标题分隔符，如「围炉 - 站点名」
         - $formkit: number
           name: pageSize
           label: 每页条数
@@ -33,12 +33,12 @@ spec:
           min: 10
           max: 100
           validation: required|min:10|max:100
-          help: 内置 /fireside 页面每页展示的动态条数，范围 10~100。值越大首屏越长
+          help: 每页条数，10~100；越大首屏越长
         - $formkit: text
           name: friendTag
           label: 友链动态标签
           value: 友链
-          help: 赋给每条友链动态的标签名（无需带 # 号，展示时自动添加）；主题可用 ?tag=该标签 仅筛出友链动态。留空则使用默认值「友链」
+          help: 友链动态标签名，无需 #；留空为「友链」。可用 ?tag=该名称筛选
         - $formkit: group
           name: appearance
           label: 外观
@@ -46,12 +46,12 @@ spec:
             - $formkit: attachment
               name: coverImage
               label: 封面图
-              help: 内置 /fireside 页面顶部的朋友圈式封面图，建议横图；同时用作列表页分享预览图（og:image）。留空则用默认深色底，且不输出分享图
+              help: 顶部封面（建议横图），并用作列表分享预览图；留空为默认底且不输出分享图
             - $formkit: textarea
               name: signature
               label: 签名
               rows: 2
-              help: 显示在封面下方、头像一侧（仿朋友圈签名位），可填站点的一句话描述，如「记录生活中的点滴瞬间」；同时用作列表页 SEO / 分享描述。留空则不显示签名，且不输出描述
+              help: 封面下签名，并用作列表 SEO/分享描述；留空则不显示也不输出描述
             - $formkit: radio
               name: colorScheme
               label: 配色方案
@@ -63,12 +63,12 @@ spec:
                   value: light
                 - label: 深色
                   value: dark
-              help: 内置 /fireside 页面的默认配色；允许访客切换时，访客的选择优先于此默认值
+              help: 页面默认配色；若允许访客切换，以其本地选择为准
             - $formkit: checkbox
               name: allowSchemeToggle
               label: 允许访客切换配色
               value: true
-              help: 在页面右下角显示 明/暗/自动 切换按钮，访客的选择保存在其浏览器本地。关闭后页面严格按上方默认配色显示
+              help: 右下角显示配色切换；关闭后固定为上方默认配色
         - $formkit: group
           name: interaction
           label: 互动
@@ -80,12 +80,12 @@ spec:
               min: -1
               max: 100
               validation: required|min:-1|max:100
-              help: 自身瞬间卡片下方灰底展示的最新顶层评论条数（仿朋友圈，进入视口后加载，不含回复）。0 为关闭预览，-1 为全部显示；超出条数时显示「查看全部 N 条评论」入口
+              help: 卡片下预览的最新顶层评论数。0 关闭，-1 全部；超出显示「查看全部」
             - $formkit: checkbox
               name: showComposeEntry
               label: 显示发瞬间入口
               value: true
-              help: 在 /fireside 封面右上角显示相机按钮（仿朋友圈），可在页面内直接发布瞬间。仅对已登录且有「允许发布自己的瞬间」权限的用户可见，访客不可见；无免审核权限的用户发布后需经后台审核才会展示
+              help: 封面显示发瞬间入口。仅登录且有发布权限者可见；无免审核权限时需后台审核
     - group: sync
       label: 同步设置
       formSchema:
@@ -93,21 +93,21 @@ spec:
           name: enabled
           label: 启用定时同步
           value: true
-          help: 关闭后停止定时抓取友链 RSS，已抓取的数据保留
+          help: 关闭后停止定时抓取，已有数据保留
         - $formkit: number
           name: intervalMinutes
           label: 同步间隔（分钟）
           value: 60
           min: 5
           validation: required|min:5
-          help: 每隔多久抓取一次友链 RSS。最小 5 分钟（避免高频抓取给友链站点造成压力），不设上限
+          help: 抓取间隔，最小 5 分钟
         - $formkit: number
           name: maxLinksPerRun
           label: 每轮最多处理的友链数
           value: 20
           min: 1
           validation: required|min:1
-          help: 最小 1，不设上限；大于订阅总数时相当于每轮全量同步，超出的部分下轮轮换处理
+          help: 每轮最多处理的友链数；大于订阅总数时相当于每轮全量
         - $formkit: number
           name: retainPerLink
           label: 每个友链保留的最新条数
@@ -115,7 +115,7 @@ spec:
           min: 1
           max: 100
           validation: required|min:1|max:100
-          help: 超出后按发布时间删除最旧的条目。范围 1~100，上限为存储安全边界，不可调高
+          help: 每个友链保留的最新条数，1~100，超出删最旧
         - $formkit: number
           name: timeoutSeconds
           label: 抓取超时（秒）
@@ -123,4 +123,4 @@ spec:
           min: 1
           max: 60
           validation: required|min:1|max:60
-          help: 单个 RSS 请求的连接/读取超时。范围 1~60 秒，防止个别慢站点拖长整轮同步
+          help: 单个 RSS 超时，1~60 秒

@@ -1,7 +1,6 @@
 /**
- * 围炉 /fireside 页面脚本：点赞、评论预览、富链接、发瞬间等交互。
- * 页面内容（含分页）全部由服务端渲染；列表页评论只做只读预览
- * （仿朋友圈灰底块，点击进详情页），完整评论组件仅详情页模板渲染。
+ * 围炉 /fireside：点赞、评论、富链接、发瞬间、长文折叠等。
+ * 列表可原地展开评论、折叠长文；详情评论默认展开、正文不折叠。
  */
 ;(function () {
   'use strict';
@@ -10,6 +9,156 @@
   // 同一浏览器在主题页和本页的点赞状态互通
   var UPVOTE_API = '/apis/api.halo.run/v1alpha1/trackers/upvote';
   var UPVOTED_STORE_KEY = 'halo.upvoted.moment.names';
+
+  // 列表页长文折叠：超 6 行显示「全文/收起」；详情页跳过
+  var contentCollapseResizeBound = false;
+  var contentCollapseResizeTimer = 0;
+
+  function bindContentCollapse() {
+    if (document.querySelector('.fireside-detail-card')) {
+      return;
+    }
+    var contents = document.querySelectorAll('.fireside-card-content');
+    Array.prototype.forEach.call(contents, function (content) {
+      prepareContentCollapse(content);
+    });
+    // 双 rAF：等字体/布局稳定后再测一次
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(function () {
+        requestAnimationFrame(remeasureAllContentCollapse);
+      });
+    } else {
+      setTimeout(remeasureAllContentCollapse, 0);
+    }
+    if (!contentCollapseResizeBound) {
+      contentCollapseResizeBound = true;
+      window.addEventListener('resize', function () {
+        if (contentCollapseResizeTimer) {
+          clearTimeout(contentCollapseResizeTimer);
+        }
+        contentCollapseResizeTimer = setTimeout(remeasureAllContentCollapse, 150);
+      });
+    }
+  }
+
+  function remeasureAllContentCollapse() {
+    var contents = document.querySelectorAll('.fireside-card-content[data-fs-collapse]');
+    Array.prototype.forEach.call(contents, function (content) {
+      measureContentCollapse(content);
+    });
+  }
+
+  /** 包一层 body，限高时不影响「全文」按钮 */
+  function prepareContentCollapse(content) {
+    if (!content || content.getAttribute('data-fs-collapse')) {
+      return;
+    }
+    var body = document.createElement('div');
+    body.className = 'fireside-card-content__body';
+    while (content.firstChild) {
+      body.appendChild(content.firstChild);
+    }
+    content.appendChild(body);
+    content.setAttribute('data-fs-collapse', '1');
+    content.classList.add('is-collapsed');
+    measureContentCollapse(content);
+  }
+
+  function findDirectChildByClass(parent, className) {
+    var children = parent.children;
+    for (var i = 0; i < children.length; i++) {
+      if (children[i].classList && children[i].classList.contains(className)) {
+        return children[i];
+      }
+    }
+    return null;
+  }
+
+  /** 收起态下比 scrollHeight/clientHeight，决定是否挂「全文」 */
+  function measureContentCollapse(content) {
+    var body = findDirectChildByClass(content, 'fireside-card-content__body');
+    if (!body) {
+      return;
+    }
+    // offsetParent 为空时可能是 fixed 祖先，用矩形兜底
+    if (!content.isConnected || content.offsetParent === null) {
+      var rect = content.getBoundingClientRect();
+      if (!content.isConnected || (rect.width === 0 && rect.height === 0)) {
+        return;
+      }
+    }
+    var wasExpanded = content.classList.contains('is-expanded');
+    content.classList.add('is-collapsed');
+    content.classList.remove('is-expanded');
+    var collapsedH = body.clientHeight;
+    var fullH = body.scrollHeight;
+    if (collapsedH <= 0) {
+      if (wasExpanded) {
+        content.classList.remove('is-collapsed');
+        content.classList.add('is-expanded');
+      }
+      return;
+    }
+    var needsCollapse = fullH > collapsedH + 1;
+
+    if (!needsCollapse) {
+      content.classList.remove('is-collapsed');
+      content.classList.remove('is-expanded');
+      removeContentToggle(content);
+      return;
+    }
+    if (wasExpanded) {
+      content.classList.remove('is-collapsed');
+      content.classList.add('is-expanded');
+    }
+    ensureContentToggle(content);
+    syncContentToggle(content);
+  }
+
+  function ensureContentToggle(content) {
+    var btn = findDirectChildByClass(content, 'fireside-content-toggle');
+    if (btn) {
+      return btn;
+    }
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'fireside-content-toggle';
+    btn.addEventListener('click', function () {
+      toggleContentCollapse(content);
+    });
+    content.appendChild(btn);
+    return btn;
+  }
+
+  function removeContentToggle(content) {
+    var btn = findDirectChildByClass(content, 'fireside-content-toggle');
+    if (btn) {
+      btn.remove();
+    }
+  }
+
+  function toggleContentCollapse(content) {
+    var expanded = content.classList.contains('is-expanded');
+    if (expanded) {
+      content.classList.remove('is-expanded');
+      content.classList.add('is-collapsed');
+    } else {
+      content.classList.remove('is-collapsed');
+      content.classList.add('is-expanded');
+    }
+    syncContentToggle(content);
+  }
+
+  function syncContentToggle(content) {
+    var btn = findDirectChildByClass(content, 'fireside-content-toggle');
+    if (!btn) {
+      return;
+    }
+    var expanded = content.classList.contains('is-expanded');
+    btn.textContent = expanded ? '收起' : '全文';
+    btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    btn.setAttribute('aria-label', expanded ? '收起正文' : '展开全文');
+  }
 
   /**
    * 清理正文里的内嵌标签（a.tag，瞬间编辑器产物/友链注入）：
@@ -597,7 +746,7 @@
     fillCommentPreview(box);
   }
 
-  /** 复制条目详情页链接，成功后按钮短暂显示"已复制" */
+  /** 复制详情页链接，成功后短暂显示对勾 */
   function handleCopy(btn) {
     var path = btn.dataset.path;
     if (!path || btn.classList.contains('fireside-copied')) {
@@ -724,6 +873,8 @@
 
   applyLikedState();
   cleanContentTags();
+  // cleanContentTags 之后再测，避免空正文干扰
+  bindContentCollapse();
   bindMediaLoading();
   bindRichLinks(document);
   bindCommentPreviews();
@@ -1036,9 +1187,7 @@
       var img = document.createElement('img');
       img.src = item.objectUrl;
       img.alt = '';
-      // 禁掉浏览器原生的图片拖拽，避免抢占自定义拖拽排序的指针流
       img.draggable = false;
-      // 上传遮罩 + 进度环（仿微信朋友圈：深色蒙层中央白环）
       var mask = document.createElement('div');
       mask.className = 'fireside-compose-upload-mask';
       mask.setAttribute('aria-hidden', 'true');
@@ -1907,18 +2056,15 @@
         return;
       }
       submitting = true;
-      // 一点发表就灰掉按钮（有无待传图都一样），文案始终「发表」
       setSubmitBusy(true);
       setComposeLocked(true);
       hideTip();
-      // 仿微信朋友圈：点发表才把图片逐张上传，全部就位再创建瞬间；
-      // 有失败则中止发表，再按“发表”只补传失败的（成功的已记住 permalink）
+      // 点发表才串行上传；失败可重试（成功张已记住 permalink）
       uploadPendingMedia(function (failures) {
         if (failures.length) {
           submitting = false;
           setSubmitBusy(false);
           setComposeLocked(false);
-          // 失败张已标 is-failed；清掉其余可能残留的排队遮罩
           clearMediaUploadClasses();
           showUploadFailure(failures);
           return;
@@ -1927,11 +2073,7 @@
       });
     }
 
-    /** 把还没有 permalink 的图片按九宫格槽位顺序逐张上传（微信同款：
-     * 轮到哪张哪张亮进度环，一张完成再传下一张）；中途失败不打断
-     * 后续张，全部结束后统一回调失败错误列表。
-     * 进度只体现在缩略图上，右上角「发表」仅变灰禁用，不改文案。
-     * 批量开始时所有待传先盖等待遮罩，轮到谁再切进度环 */
+    /** 无 permalink 的图按槽位串行上传；失败不中断后续张 */
     function uploadPendingMedia(done) {
       var pending = mediaItems.filter(function (m) { return !m.url; });
       if (!pending.length) {
@@ -1942,7 +2084,6 @@
       var finished = 0;
       var failures = [];
       var cursor = 0;
-      // 全部待传先进入排队态（深遮罩、无环），避免串行时后面几张看起来像已完成
       pending.forEach(function (m) {
         m.failed = false;
         m.uploading = false;
@@ -1969,7 +2110,7 @@
       next();
     }
 
-    /** 清掉非失败项上的上传/排队 class（失败项保留 is-failed） */
+    /** 清掉上传/排队 class（保留 is-failed） */
     function clearMediaUploadClasses() {
       mediaItems.forEach(function (m) {
         if (!m.el) {
@@ -1980,8 +2121,7 @@
       });
     }
 
-    /** 缩略图进度环：0–100；无数值时走不确定转圈。
-     * 不确定态必须清掉 inline background，否则会盖住 CSS 转圈渐变 */
+    /** 进度环 0–100；≤0 为不确定转圈（须清 inline background） */
     function setMediaProgress(item, percent) {
       if (!item || !item.el) {
         return;
@@ -1997,13 +2137,22 @@
         return;
       }
       ring.classList.remove('is-indeterminate');
-      // conic-gradient 画弧：已完成段白色，剩余段半透明白
       ring.style.background =
         'conic-gradient(#fff ' + p + '%, rgba(255,255,255,0.25) ' + p + '% 100%)';
     }
 
-    /** 单张图片经 Halo UC 附件接口上传（XHR 以便拿到真实字节进度），
-     * 成功后把 permalink 记回 item；从排队态切到上传中（显示进度环） */
+    function markUploadFailed(item, err) {
+      item.uploading = false;
+      item.failed = true;
+      if (item.el) {
+        item.el.classList.remove('is-uploading', 'is-pending');
+        item.el.classList.add('is-failed');
+      }
+      console.warn('[围炉] 图片上传失败', err);
+      return err;
+    }
+
+    /** UC 附件上传（XHR 取字节进度） */
     function uploadOne(item, cb) {
       item.uploading = true;
       item.failed = false;
@@ -2015,14 +2164,12 @@
       form.append('file', item.file);
       var xhr = new XMLHttpRequest();
       xhr.open('POST', UC_UPLOAD_API);
-      // 与页面同源 cookie 会话保持一致
       xhr.withCredentials = true;
 
       xhr.upload.onprogress = function (e) {
         if (e.lengthComputable && e.total > 0) {
           setMediaProgress(item, (e.loaded / e.total) * 100);
         } else {
-          // 服务端未回传总量时保持不确定转圈
           setMediaProgress(item, 0);
         }
       };
@@ -2032,31 +2179,19 @@
         item.el.classList.remove('is-uploading', 'is-pending');
         var status = xhr.status;
         if (status < 200 || status >= 300) {
-          item.failed = true;
-          item.el.classList.add('is-failed');
-          var httpErr = Object.assign(new Error('HTTP ' + status), { status: status });
-          console.warn('[围炉] 图片上传失败', httpErr);
-          cb(httpErr);
+          cb(markUploadFailed(item, Object.assign(new Error('HTTP ' + status), { status: status })));
           return;
         }
         var attachment;
         try {
           attachment = JSON.parse(xhr.responseText || '{}');
         } catch (parseErr) {
-          item.failed = true;
-          item.el.classList.add('is-failed');
-          console.warn('[围炉] 图片上传响应解析失败', parseErr);
-          cb(parseErr || new Error('响应解析失败'));
+          cb(markUploadFailed(item, parseErr || new Error('响应解析失败')));
           return;
         }
-        // 上传接口保证返回前已解析好 permalink（即图片最终 URL）
         var permalink = attachment && attachment.status && attachment.status.permalink;
         if (!permalink) {
-          item.failed = true;
-          item.el.classList.add('is-failed');
-          var missing = new Error('响应缺少 permalink');
-          console.warn('[围炉] 图片上传失败', missing);
-          cb(missing);
+          cb(markUploadFailed(item, new Error('响应缺少 permalink')));
           return;
         }
         item.url = permalink;
@@ -2065,27 +2200,16 @@
       };
 
       xhr.onerror = function () {
-        item.uploading = false;
-        item.failed = true;
-        item.el.classList.remove('is-uploading', 'is-pending');
-        item.el.classList.add('is-failed');
-        var netErr = new Error('网络错误');
-        console.warn('[围炉] 图片上传失败', netErr);
-        cb(netErr);
+        cb(markUploadFailed(item, new Error('网络错误')));
       };
 
       xhr.onabort = function () {
-        item.uploading = false;
-        item.failed = true;
-        item.el.classList.remove('is-uploading', 'is-pending');
-        item.el.classList.add('is-failed');
-        cb(new Error('上传已取消'));
+        cb(markUploadFailed(item, new Error('上传已取消')));
       };
 
       xhr.send(form);
     }
 
-    /** 权限/配置类错误给定向提示（文案与旧“选图即传”版一致），其余按张数汇总 */
     function showUploadFailure(failures) {
       var has403 = failures.some(function (e) { return e && e.status === 403; });
       var has400 = failures.some(function (e) { return e && e.status === 400; });
@@ -2099,12 +2223,8 @@
     }
 
     function publishMoment(text, contentTags) {
-      // 按钮在 handlePublish 已灰；此处再调一次保证无图路径也一致
       setSubmitBusy(true);
-      // payload 结构与瞬间插件官方 UC 发布组件一致；
-      // owner 与 approved 由服务端按当前用户和角色强制覆写；
-      // raw 与 html 同为富文本 HTML（官方模型，后台编辑器直接装载 raw）。
-      // 编辑器路径直接取 Tiptap HTML 再包装 #标签；textarea 兜底走 textToHtml
+      // payload 对齐瞬间插件 UC 发布；owner/approved 由服务端覆写
       var contentHtml = editorWrap
         ? (editorWrap.isEmpty() ? '' : decorateTags(editorWrap.getHTML(), contentTags))
         : textToHtml(text, contentTags);
@@ -2116,7 +2236,6 @@
           content: {
             raw: contentHtml,
             html: contentHtml,
-            // 走到这里所有图片必已上传成功，按九宫格顺序（可拖拽调整）出图
             medium: mediaItems.map(function (m) {
               return { type: 'PHOTO', url: m.url, originType: m.originType };
             })
@@ -2140,8 +2259,7 @@
           return res.json();
         })
         .then(function (created) {
-          // 免审核角色的瞬间即时生效，刷新后出现在时间线首位；
-          // 待审核的瞬间上不了时间线，提示后关闭浮层
+          // approved：免审直接刷新；否则提示待审
           if (created && created.spec && created.spec.approved) {
             location.reload();
             return;
@@ -2168,7 +2286,7 @@
         });
     }
 
-    /** 发表/上传进行中：按钮保持「发表」文案，仅 disabled 变灰（仿微信） */
+    /** 发表中：按钮仅灰显，文案始终「发表」 */
     function setSubmitBusy(busy) {
       submitBtns.forEach(function (btn) {
         btn.disabled = busy;
@@ -2176,9 +2294,7 @@
       });
     }
 
-    /** 发表进行中锁住可编辑区（payload 采用点发表那一刻的快照，
-     * 中途编辑不会生效，干脆按微信的做法禁掉；移除按钮与拖拽
-     * 已在各自入口用 submitting 挡住） */
+    /** 发表中锁编辑区（payload 取点击瞬间快照） */
     function setComposeLocked(locked) {
       textInput.disabled = locked;
       if (editorWrap) {
@@ -2190,7 +2306,6 @@
       visibleBtn.disabled = locked;
       addBtn.disabled = locked;
       if (!locked) {
-        // 解锁后恢复撤销/重做按钮的真实可用态
         syncToolbar();
       }
     }
