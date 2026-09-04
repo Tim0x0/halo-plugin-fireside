@@ -4,6 +4,7 @@ import static org.springframework.web.reactive.function.server.RequestPredicates
 import static org.springframework.web.reactive.function.server.RouterFunctions.route;
 
 import com.timxs.fireside.config.DisplayConfig;
+import com.timxs.fireside.exception.NotFoundException;
 import com.timxs.fireside.finders.impl.FiresideFinderImpl;
 import com.timxs.fireside.vo.FiresideMomentVo;
 import com.timxs.fireside.vo.FiresideTagVo;
@@ -14,13 +15,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.jsoup.Jsoup;
-import org.springframework.http.HttpStatus;
 import org.springframework.web.reactive.function.server.RouterFunction;
 import org.springframework.web.reactive.function.server.ServerRequest;
 import org.springframework.web.reactive.function.server.ServerResponse;
-import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.util.UriComponentsBuilder;
 import reactor.core.publisher.Mono;
 import run.halo.app.plugin.PluginContext;
@@ -33,6 +33,7 @@ import run.halo.app.theme.TemplateNameResolver;
  * GET /fireside/{name}   —— 自身瞬间详情页
  * 首屏与每一页均为 SSR，模板可被主题覆盖（TemplateNameResolver 兜底到插件 jar 内模板）。
  */
+@Slf4j
 @RequiredArgsConstructor
 public class FiresideRouter {
 
@@ -64,6 +65,10 @@ public class FiresideRouter {
             .orElse(null);
         return displayConfig().flatMap(display ->
             firesideFinder.timelineSlice(before, display.effectivePageSize(), tag)
+                // 查询失败不降级空时间线（会伪装成「暂时没有动态」），记日志后原样上抛，
+                // 由 HaloErrorWebExceptionHandler 渲染主题 error 页，避免浏览器白页错误码
+                .doOnError(e -> log.error(
+                    "加载围炉时间线失败 before={} tag={}", before, tag, e))
                 .flatMap(slice -> templateNameResolver
                     .resolveTemplateNameOrDefault(request.exchange(), "fireside")
                     .flatMap(templateName -> ServerResponse.ok()
@@ -85,8 +90,8 @@ public class FiresideRouter {
                     .resolveTemplateNameOrDefault(request.exchange(), "fireside-detail")
                     .flatMap(templateName -> ServerResponse.ok()
                         .render(templateName, buildDetailModel(moment, display))))
-                .switchIfEmpty(Mono.error(() -> new ResponseStatusException(
-                    HttpStatus.NOT_FOUND, "Moment not found: " + name))));
+                .switchIfEmpty(Mono.error(() -> new NotFoundException(
+                    "Moment not found: " + name))));
     }
 
     /** 详情 model：附加 seoDescription（正文摘要）、seoImage（首图，可为相对路径）。 */
@@ -190,7 +195,11 @@ public class FiresideRouter {
 
     private Mono<DisplayConfig> displayConfig() {
         return settingFetcher.fetch(DisplayConfig.GROUP, DisplayConfig.class)
-            .defaultIfEmpty(new DisplayConfig());
+            .defaultIfEmpty(new DisplayConfig())
+            .onErrorResume(e -> {
+                log.warn("读取围炉展示配置失败，回退默认值", e);
+                return Mono.just(new DisplayConfig());
+            });
     }
 
     private static String tagParam(ServerRequest request) {
