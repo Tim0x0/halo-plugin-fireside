@@ -60,6 +60,7 @@ export interface LinkSyncResult {
   linkName: string
   displayName: string
   created: number
+  updated: number
   trimmed: number
   success: boolean
   error?: string | null
@@ -70,6 +71,7 @@ export interface SyncResponse {
   successCount: number
   failureCount: number
   createdCount: number
+  updatedCount: number
   results: LinkSyncResult[]
 }
 

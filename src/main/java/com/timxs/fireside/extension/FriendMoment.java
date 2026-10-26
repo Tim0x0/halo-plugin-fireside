@@ -63,6 +63,10 @@ public class FriendMoment extends AbstractExtension {
             + "来自正文媒体标签与 RSS enclosure 附件")
         private List<MediaItem> media;
 
+        @Schema(description = "清洗后内容的 SHA-256（标题、正文、摘要、媒体地址）。"
+            + "同步时与新抓取结果比对，相同则跳过；为空表示哈希机制上线前的旧数据")
+        private String contentHash;
+
         @Schema(description = "是否隐藏：隐藏后不再对外输出（Finder/公开 API），"
             + "但 postLink 仍保留用于去重，不会被重新抓取")
         private Boolean hidden;

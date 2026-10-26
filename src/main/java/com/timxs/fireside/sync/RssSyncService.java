@@ -23,6 +23,10 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
@@ -118,8 +122,8 @@ public class RssSyncService {
     /**
      * 单个友链的同步结果摘要。
      */
-    public record LinkSyncResult(String linkName, String displayName, int created, int trimmed,
-                                 String error) {
+    public record LinkSyncResult(String linkName, String displayName, int created, int updated,
+                                 int trimmed, String error) {
         public boolean success() {
             return error == null;
         }
@@ -161,14 +165,14 @@ public class RssSyncService {
     public LinkSyncResult syncLink(String linkName, SyncConfig config) {
         Link link = client.fetch(Link.class, linkName).orElse(null);
         if (link == null) {
-            return new LinkSyncResult(linkName, linkName, 0, 0, "友链不存在");
+            return new LinkSyncResult(linkName, linkName, 0, 0, 0, "友链不存在");
         }
         String displayName = displayNameOf(link);
         if (StringUtils.isBlank(rssUrlOf(link))) {
-            return new LinkSyncResult(linkName, displayName, 0, 0, "未配置动态 RSS 地址");
+            return new LinkSyncResult(linkName, displayName, 0, 0, 0, "未配置动态 RSS 地址");
         }
         if (isPaused(link)) {
-            return new LinkSyncResult(linkName, displayName, 0, 0, "该订阅已暂停");
+            return new LinkSyncResult(linkName, displayName, 0, 0, 0, "该订阅已暂停");
         }
         return runLocked(() -> syncOne(link, config));
     }
@@ -270,7 +274,7 @@ public class RssSyncService {
         String displayName = displayNameOf(link);
         String rssUrl = rssUrlOf(link);
         if (rssUrl == null) {
-            return new LinkSyncResult(linkName, displayName, 0, 0, "未配置动态 RSS 地址");
+            return new LinkSyncResult(linkName, displayName, 0, 0, 0, "未配置动态 RSS 地址");
         }
         Instant fetchedAt = Instant.now();
         try {
@@ -287,28 +291,34 @@ public class RssSyncService {
                 .filter(Objects::nonNull)
                 .toList();
             int created = 0;
+            int updated = 0;
             for (FriendMoment.FriendMomentSpec spec : specs) {
-                if (exists(spec.getLinkName(), spec.getPostLink())) {
+                FriendMoment existing = findExisting(spec.getLinkName(), spec.getPostLink());
+                if (existing == null) {
+                    var friendMoment = new FriendMoment();
+                    var metadata = new Metadata();
+                    metadata.setGenerateName("friend-moment-");
+                    friendMoment.setMetadata(metadata);
+                    friendMoment.setSpec(spec);
+                    client.create(friendMoment);
+                    created++;
                     continue;
                 }
-                var friendMoment = new FriendMoment();
-                var metadata = new Metadata();
-                metadata.setGenerateName("friend-moment-");
-                friendMoment.setMetadata(metadata);
-                friendMoment.setSpec(spec);
-                client.create(friendMoment);
-                created++;
+                if (applyContentChange(existing, spec)) {
+                    updated++;
+                }
             }
             TrimResult trim = trimToRetain(linkName, retain);
             upsertFeedStatus(linkName, rssUrl, fetchedAt, null, trim);
-            log.info("[围炉] 同步友链 [{}] 完成：新增 {} 条，清理 {} 条", linkName, created,
-                trim.trimmed());
-            return new LinkSyncResult(linkName, displayName, created, trim.trimmed(), null);
+            log.info("[围炉] 同步友链 [{}] 完成：新增 {} 条，更新 {} 条，清理 {} 条",
+                linkName, created, updated, trim.trimmed());
+            return new LinkSyncResult(linkName, displayName, created, updated, trim.trimmed(),
+                null);
         } catch (Exception e) {
             String error = StringUtils.defaultIfBlank(e.getMessage(), e.getClass().getSimpleName());
             upsertFeedStatus(linkName, rssUrl, fetchedAt, error, null);
             log.warn("[围炉] 同步友链 [{}] 失败（{}）：{}", linkName, rssUrl, error);
-            return new LinkSyncResult(linkName, displayName, 0, 0, error);
+            return new LinkSyncResult(linkName, displayName, 0, 0, 0, error);
         }
     }
 
@@ -432,6 +442,7 @@ public class RssSyncService {
         spec.setContentHtml(contentHtml);
         spec.setContentText(contentText);
         spec.setMedia(media);
+        spec.setContentHash(contentHash(spec.getTitle(), contentHtml, contentText, media));
         spec.setPubDate(pubDate);
         return spec;
     }
@@ -699,12 +710,76 @@ public class RssSyncService {
      * 去重限定在本友链范围内：postLink 若全局唯一，恶意 feed 可抢注他人文章 URL，
      * 导致真实条目无法入库且署名错误。
      */
-    private boolean exists(String linkName, String postLink) {
+    private FriendMoment findExisting(String linkName, String postLink) {
         var options = ListOptions.builder()
             .fieldQuery(and(equal("spec.linkName", linkName),
                 equal("spec.postLink", postLink)))
             .build();
-        return !client.listAll(FriendMoment.class, options, Sort.unsorted()).isEmpty();
+        return client.listAll(FriendMoment.class, options, Sort.unsorted()).stream()
+            .findFirst()
+            .orElse(null);
+    }
+
+    /**
+     * 已存在条目的内容变更：哈希相同（含双方都为空）直接跳过；不同则只覆盖展示内容，
+     * 保留发布时间与隐藏状态——发布时间在源缺失时按抓取时刻兜底，重算会把旧条目顶到
+     * 时间线最前；隐藏是站长的手动标记，覆盖会让隐藏条目重新出现在前台。
+     * 哈希上线前的旧数据 contentHash 为空，首次同步必然视为变更，顺带补齐媒体。
+     *
+     * @return 是否写入了更新
+     */
+    private boolean applyContentChange(FriendMoment existing, FriendMoment.FriendMomentSpec fresh) {
+        FriendMoment.FriendMomentSpec spec = existing.getSpec();
+        if (spec != null && Objects.equals(spec.getContentHash(), fresh.getContentHash())) {
+            return false;
+        }
+        if (spec == null) {
+            existing.setSpec(fresh);
+        } else {
+            spec.setTitle(fresh.getTitle());
+            spec.setContentHtml(fresh.getContentHtml());
+            spec.setContentText(fresh.getContentText());
+            spec.setMedia(fresh.getMedia());
+            spec.setContentHash(fresh.getContentHash());
+        }
+        client.update(existing);
+        return true;
+    }
+
+    /**
+     * 清洗结果的内容指纹：标题、正文、摘要与媒体地址按顺序拼接，算一次 SHA-256。
+     * 只覆盖真正落库展示的内容——统计像素、标签链接等清洗时丢弃的抖动不会触发更新；
+     * 媒体只取地址，类型由地址所在标签或 MIME 推导，不单独参与。
+     * 每段前加长度前缀，避免字段边界处的内容拼接出歧义。
+     */
+    static String contentHash(String title, String contentHtml, String contentText,
+        List<FriendMoment.MediaItem> media) {
+        var digest = sha256();
+        updateHash(digest, title);
+        updateHash(digest, contentHtml);
+        updateHash(digest, contentText);
+        if (media != null) {
+            for (FriendMoment.MediaItem item : media) {
+                updateHash(digest, item.getUrl());
+            }
+        }
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private static void updateHash(MessageDigest digest, String value) {
+        byte[] bytes = StringUtils.defaultString(value).getBytes(StandardCharsets.UTF_8);
+        digest.update(Integer.toString(bytes.length).getBytes(StandardCharsets.US_ASCII));
+        digest.update((byte) ':');
+        digest.update(bytes);
+        digest.update((byte) ';');
+    }
+
+    private static MessageDigest sha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 不可用", e);
+        }
     }
 
     private record TrimResult(int trimmed, long itemCount, Instant latestPublishedAt) {

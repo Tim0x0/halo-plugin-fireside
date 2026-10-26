@@ -75,12 +75,13 @@ public class SyncEndpoint implements CustomEndpoint {
             : List.of(syncService.syncLink(name, config));
         int success = (int) results.stream().filter(RssSyncService.LinkSyncResult::success).count();
         int created = results.stream().mapToInt(RssSyncService.LinkSyncResult::created).sum();
+        int updated = results.stream().mapToInt(RssSyncService.LinkSyncResult::updated).sum();
         return new SyncResponse(results.size(), success, results.size() - success, created,
-            results);
+            updated, results);
     }
 
     public record SyncResponse(int total, int successCount, int failureCount, int createdCount,
-                               List<RssSyncService.LinkSyncResult> results) {
+                               int updatedCount, List<RssSyncService.LinkSyncResult> results) {
     }
 
     @Override

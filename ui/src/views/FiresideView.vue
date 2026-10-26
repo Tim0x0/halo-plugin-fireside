@@ -281,7 +281,10 @@ function showSyncSummary(summary: SyncResponse, label: string) {
     return
   }
   const trimmed = summary.results.reduce((sum, r) => sum + (r.trimmed || 0), 0)
-  const text = `新增 ${summary.createdCount} 条${trimmed ? `，按保留策略清理 ${trimmed} 条旧数据` : ''}`
+  const updated = summary.updatedCount
+    ? `，更新 ${summary.updatedCount} 条`
+    : ''
+  const text = `新增 ${summary.createdCount} 条${updated}${trimmed ? `，按保留策略清理 ${trimmed} 条旧数据` : ''}`
   if (!summary.failureCount) {
     Toast.success(`${label}同步完成：成功 ${summary.successCount} 个，${text}`)
     return
