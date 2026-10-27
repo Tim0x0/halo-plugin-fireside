@@ -67,9 +67,17 @@ public class FriendMoment extends AbstractExtension {
             + "同步时与新抓取结果比对，相同则跳过；为空表示哈希机制上线前的旧数据")
         private String contentHash;
 
-        @Schema(description = "是否隐藏：隐藏后不再对外输出（Finder/公开 API），"
-            + "但 postLink 仍保留用于去重，不会被重新抓取")
+        @Schema(description = "是否隐藏：后台手动标记。前台与后台正常列表都不展示，"
+            + "收在「已隐藏」里可恢复；postLink 仍保留用于去重，不会被重新抓取")
         private Boolean hidden;
+
+        @Schema(description = "作者已删除：上次同步时该条目仍在保留窗口内，但整份 feed 已不再包含它。"
+            + "前台不展示、不占保留名额，后台正常列表以红点标出；重新出现在 feed 中即清除")
+        private Boolean authorDeleted;
+
+        @Schema(description = "是否已读：仅后台使用。新入库为未读（绿点），手动标记后清除；"
+            + "作者已删除与已隐藏的条目不计入未读")
+        private Boolean read;
 
         @Schema(requiredMode = REQUIRED, description = "发布时间，排序键；缺失时回退抓取时刻")
         private Instant pubDate;

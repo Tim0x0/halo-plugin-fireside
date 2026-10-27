@@ -10,20 +10,25 @@ import {
   VPageHeader,
   VPagination,
   VSpace,
+  vTooltip,
 } from '@halo-dev/components'
 import { utils } from '@halo-dev/ui-shared'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import RiFireLine from '~icons/ri/fire-line'
 import RiArrowLeftLine from '~icons/ri/arrow-left-line'
-import RiPauseCircleLine from '~icons/ri/pause-circle-line'
-import RiPlayCircleLine from '~icons/ri/play-circle-line'
-import RiRefreshLine from '~icons/ri/refresh-line'
-import RiDeleteBinLine from '~icons/ri/delete-bin-line'
-import RiExternalLinkLine from '~icons/ri/external-link-line'
-import RiEyeOffLine from '~icons/ri/eye-off-line'
-import RiEyeLine from '~icons/ri/eye-line'
 import RiRssLine from '~icons/ri/rss-line'
+import MgRefresh2Line from '~icons/mingcute/refresh-2-line'
+import MgPauseCircleLine from '~icons/mingcute/pause-circle-line'
+import MgPlayCircleLine from '~icons/mingcute/play-circle-line'
+import MgDelete2Line from '~icons/mingcute/delete-2-line'
+import MgCheckLine from '~icons/mingcute/check-line'
+import MgMultiselectLine from '~icons/mingcute/multiselect-line'
+import MgMailLine from '~icons/mingcute/mail-line'
+import MgMailOpenLine from '~icons/mingcute/mail-open-line'
+import MgEyeCloseLine from '~icons/mingcute/eye-close-line'
+import MgEye2Line from '~icons/mingcute/eye-2-line'
+import MgExternalLinkLine from '~icons/mingcute/external-link-line'
 import {
   PAUSED_ANNO,
   RSS_URL_ANNO,
@@ -45,6 +50,10 @@ const page = ref(1)
 const size = ref(20)
 const selectedLinkName = ref<string>('')
 const showHidden = ref(false)
+const showUnread = ref(false)
+// 批量选择：仅正常条目可被选中（作者已删除的不可标已读、不可隐藏）
+const selecting = ref(false)
+const selectedNames = ref<Set<string>>(new Set())
 
 const loadingList = ref(false)
 const loadingLinks = ref(false)
@@ -73,6 +82,12 @@ const selectedStatus = computed(() =>
   selectedLinkName.value ? statuses.value.get(selectedLinkName.value) : undefined,
 )
 
+const emptyTitle = computed(() => {
+  if (showHidden) return '没有已隐藏的动态'
+  if (showUnread) return '没有未读动态'
+  return '暂无友链动态'
+})
+
 const selectedTitle = computed(() => {
   if (!selectedLink.value) return '全部动态'
   return displayNameOf(selectedLink.value)
@@ -82,16 +97,20 @@ const totalItemCount = computed(() =>
   links.value.reduce((sum, link) => sum + Number(itemCountOf(link)), 0),
 )
 
+const totalUnreadCount = computed(() =>
+  links.value.reduce((sum, link) => sum + Number(unreadCountOf(link)), 0),
+)
+
 const failedCount = computed(
   () => links.value.filter((link) => statuses.value.get(link.metadata.name)?.spec?.lastError).length,
 )
 
 const selectedMeta = computed(() => {
   if (!selectedLink.value) {
-    return `${links.value.length} 个订阅 / ${totalItemCount.value} 条动态`
+    return `${links.value.length} 个订阅 / ${totalItemCount.value} 条动态 / ${totalUnreadCount.value} 条未读`
   }
   const spec = selectedStatus.value?.spec
-  const parts = [`${spec?.itemCount ?? 0} 条动态`]
+  const parts = [`${spec?.itemCount ?? 0} 条动态`, `${spec?.unreadCount ?? 0} 条未读`]
   if (spec?.lastSuccessAt) {
     parts.push(`上次同步 ${formatDate(spec.lastSuccessAt)}`)
   }
@@ -138,6 +157,17 @@ function displayNameOf(link: Link) {
   return link.spec?.displayName || link.metadata.name
 }
 
+/** 侧边栏第二行：站点主机名，取不到时退回完整地址 */
+function siteLabelOf(link: Link) {
+  const url = link.spec?.url
+  if (!url) return ''
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
+
 function isPaused(link: Link) {
   return link.metadata.annotations?.[PAUSED_ANNO] === 'true'
 }
@@ -158,6 +188,10 @@ function statusDotTitle(link: Link) {
 
 function itemCountOf(link: Link) {
   return statuses.value.get(link.metadata.name)?.spec?.itemCount ?? 0
+}
+
+function unreadCountOf(link: Link) {
+  return statuses.value.get(link.metadata.name)?.spec?.unreadCount ?? 0
 }
 
 function formatDate(value?: string | null) {
@@ -205,6 +239,11 @@ async function fetchMoments() {
     query.append('size', String(size.value))
     query.append('sort', 'spec.pubDate,desc')
     query.append('fieldSelector', `spec.hidden=${showHidden.value}`)
+    // 未读只看正常条目里没读过的；作者已删除标的是红点，不进这个筛选
+    if (showUnread.value) {
+      query.append('fieldSelector', 'spec.read=false')
+      query.append('fieldSelector', 'spec.authorDeleted=false')
+    }
     if (selectedLinkName.value) {
       query.append('fieldSelector', `spec.linkName=${selectedLinkName.value}`)
     }
@@ -244,13 +283,18 @@ function selectLink(name: string) {
   if (selectedLinkName.value === name) return
   selectedLinkName.value = name
   page.value = 1
+  clearSelection()
   fetchMoments()
 }
 
-function selectTab(hidden: boolean) {
-  if (showHidden.value === hidden) return
+function selectTab(tab: 'all' | 'unread' | 'hidden') {
+  const hidden = tab === 'hidden'
+  const unread = tab === 'unread'
+  if (showHidden.value === hidden && showUnread.value === unread) return
   showHidden.value = hidden
+  showUnread.value = unread
   page.value = 1
+  clearSelection()
   fetchMoments()
 }
 
@@ -266,7 +310,7 @@ async function sync(name: string, all: boolean) {
     const { data } = await axiosInstance.post<SyncResponse>(
       `/apis/console.api.fireside.timxs.com/v1alpha1/links/${name}/sync`,
     )
-    showSyncSummary(data, all ? '全部订阅' : '当前订阅')
+    showSyncSummary(data, all)
     await reload()
   } catch (e) {
     Toast.error(errorMessage(e, '同步请求失败'))
@@ -275,30 +319,42 @@ async function sync(name: string, all: boolean) {
   }
 }
 
-function showSyncSummary(summary: SyncResponse, label: string) {
+/**
+ * 同步结果里数量为 0 的项不出现；三项都是 0 返回空串，由调用方说「没有新内容」。
+ */
+function changeSummary(summary: SyncResponse): string {
+  const trimmed = summary.results.reduce((sum, r) => sum + (r.trimmed || 0), 0)
+  return [
+    summary.createdCount ? `新增 ${summary.createdCount} 条` : '',
+    summary.updatedCount ? `更新 ${summary.updatedCount} 条` : '',
+    trimmed ? `清理 ${trimmed} 条旧数据` : '',
+  ]
+    .filter(Boolean)
+    .join('，')
+}
+
+function showSyncSummary(summary: SyncResponse, all: boolean) {
   if (!summary.total) {
     Toast.info('没有可同步的订阅')
     return
   }
-  const trimmed = summary.results.reduce((sum, r) => sum + (r.trimmed || 0), 0)
-  const updated = summary.updatedCount
-    ? `，更新 ${summary.updatedCount} 条`
-    : ''
-  const text = `新增 ${summary.createdCount} 条${updated}${trimmed ? `，按保留策略清理 ${trimmed} 条旧数据` : ''}`
+  const changes = changeSummary(summary)
+  const content = changes || '没有新内容'
   if (!summary.failureCount) {
-    Toast.success(`${label}同步完成：成功 ${summary.successCount} 个，${text}`)
+    Toast.success(`同步完成，${content}`)
     return
   }
   const failText = summary.results
     .filter((r) => r.error)
-    .map((r) => `${r.displayName}：${r.error}`)
+    .map((r) => (all ? `${r.displayName}：${r.error}` : r.error))
     .join('；')
   if (summary.failureCount === summary.total) {
-    Toast.error(`${label}同步失败：${failText}`)
+    Toast.error(`同步失败：${failText}`)
     return
   }
+  // 部分失败只在全部同步时出现；没有变更就不追加「没有新内容」，避免淹没失败原因
   Toast.warning(
-    `${label}同步完成：成功 ${summary.successCount} 个，失败 ${summary.failureCount} 个（${failText}），${text}`,
+    `同步完成：成功 ${summary.successCount} 个，失败 ${summary.failureCount} 个（${failText}）${changes ? `，${changes}` : ''}`,
   )
 }
 
@@ -322,7 +378,7 @@ async function togglePause() {
     }
     latest.metadata.annotations = annotations
     await axiosInstance.put(`/apis/core.halo.run/v1alpha1/links/${link.metadata.name}`, latest)
-    Toast.success(pausing ? '已暂停该订阅（数据保留）' : '已恢复该订阅')
+    Toast.success(pausing ? '已暂停该订阅' : '已恢复该订阅')
     await fetchLinks()
   } catch (e) {
     Toast.error(errorMessage(e, '操作失败'))
@@ -331,15 +387,15 @@ async function togglePause() {
   }
 }
 
-// 同一友链的 itemCount 写回串行化，避免连点隐藏多条时并行 GET 读到同一旧值、少减/少加
-const itemCountWriteTails = new Map<string, Promise<void>>()
+// 同一友链的计数写回串行化，避免连点时并行 GET 读到同一旧值、少减/少加
+const countWriteTails = new Map<string, Promise<void>>()
 
 /**
- * 隐藏/恢复后把 FeedStatus.itemCount 持久化（仅计可见条）。
+ * 隐藏/恢复/已读变更后把 FeedStatus 的展示数与未读数持久化。
  * 同 link 上排队执行；每次取最新版本再 PUT。失败则整表重拉状态。
  */
-function persistItemCountDelta(linkName: string, delta: number): Promise<void> {
-  const prev = itemCountWriteTails.get(linkName) ?? Promise.resolve()
+function persistCountDelta(linkName: string, itemDelta: number, unreadDelta: number): Promise<void> {
+  const prev = countWriteTails.get(linkName) ?? Promise.resolve()
   const next = prev
     .catch(() => {
       /* 上一笔失败不阻断本笔 */
@@ -352,8 +408,8 @@ function persistItemCountDelta(linkName: string, delta: number): Promise<void> {
         if (!latest.spec) {
           latest.spec = { linkName }
         }
-        const current = Number(latest.spec.itemCount ?? 0)
-        latest.spec.itemCount = Math.max(0, current + delta)
+        latest.spec.itemCount = Math.max(0, Number(latest.spec.itemCount ?? 0) + itemDelta)
+        latest.spec.unreadCount = Math.max(0, Number(latest.spec.unreadCount ?? 0) + unreadDelta)
         const { data: updated } = await axiosInstance.put<FeedStatus>(
           `/apis/fireside.timxs.com/v1alpha1/feedstatuses/${linkName}`,
           latest,
@@ -361,11 +417,11 @@ function persistItemCountDelta(linkName: string, delta: number): Promise<void> {
         statuses.value.set(linkName, updated)
         statuses.value = new Map(statuses.value)
       } catch {
-        // 计数写失败不阻断隐藏本身；重拉以恢复与后端一致
+        // 计数写失败不阻断操作本身；重拉以恢复与后端一致
         await fetchLinks()
       }
     })
-  itemCountWriteTails.set(linkName, next)
+  countWriteTails.set(linkName, next)
   return next
 }
 
@@ -390,16 +446,173 @@ async function toggleHidden(moment: FriendMoment) {
       latest,
     )
     const linkName = latest.spec.linkName
-    if (linkName) {
-      await persistItemCountDelta(linkName, wantHidden ? -1 : 1)
+    // 作者已删除的条目不进前台，不占展示数与未读数，隐藏或恢复都不改这两个计数
+    if (linkName && !latest.spec.authorDeleted) {
+      // 未读条目被隐藏时未读数一并减一，恢复时加回
+      const unreadDelta = latest.spec.read ? 0 : wantHidden ? -1 : 1
+      await persistCountDelta(linkName, wantHidden ? -1 : 1, unreadDelta)
     }
-    Toast.success(wantHidden ? '已隐藏，该条不再对外展示且不会被重新抓取' : '已恢复展示')
+    Toast.success(wantHidden ? '已隐藏' : '已恢复')
     await fetchMoments()
   } catch (e) {
     Toast.error(errorMessage(e, '操作失败'))
   } finally {
     togglingNames.value.delete(name)
   }
+}
+
+/** 标为已读/未读：只改 read，展示数不变，未读数按状态变化增减 */
+async function toggleRead(moment: FriendMoment) {
+  const name = moment.metadata.name
+  if (togglingNames.value.has(name)) return
+  togglingNames.value.add(name)
+  try {
+    const { data: latest } = await axiosInstance.get<FriendMoment>(
+      `/apis/fireside.timxs.com/v1alpha1/friendmoments/${name}`,
+    )
+    const wantRead = !latest.spec.read
+    latest.spec.read = wantRead
+    await axiosInstance.put(`/apis/fireside.timxs.com/v1alpha1/friendmoments/${name}`, latest)
+    const linkName = latest.spec.linkName
+    if (linkName && !latest.spec.hidden && !latest.spec.authorDeleted) {
+      await persistCountDelta(linkName, 0, wantRead ? -1 : 1)
+    }
+    await fetchMoments()
+  } catch (e) {
+    Toast.error(errorMessage(e, '操作失败'))
+  } finally {
+    togglingNames.value.delete(name)
+  }
+}
+
+function clearSelection() {
+  selectedNames.value = new Set()
+}
+
+function toggleSelecting() {
+  selecting.value = !selecting.value
+  clearSelection()
+}
+
+function toggleSelected(name: string) {
+  const next = new Set(selectedNames.value)
+  if (next.has(name)) {
+    next.delete(name)
+  } else {
+    next.add(name)
+  }
+  selectedNames.value = next
+}
+
+const selectableMoments = computed(() =>
+  visibleMoments.value.filter((m) => !m.spec.authorDeleted),
+)
+
+const allSelected = computed(
+  () =>
+    selectableMoments.value.length > 0 &&
+    selectableMoments.value.every((m) => selectedNames.value.has(m.metadata.name)),
+)
+
+function toggleSelectAll() {
+  selectedNames.value = allSelected.value
+    ? new Set()
+    : new Set(selectableMoments.value.map((m) => m.metadata.name))
+}
+
+/**
+ * 批量标为已读或隐藏。逐条取最新版本再写，避免覆盖同步刚补上的内容；
+ * 计数按每个友链汇总后各写一次。
+ */
+/** 全部标为已读：作用于当前选中的作者，未选作者时作用于全部，含未加载的更早条目 */
+async function markAllRead() {
+  const query = new URLSearchParams()
+  query.append('size', '1000')
+  query.append('fieldSelector', 'spec.hidden=false')
+  query.append('fieldSelector', 'spec.read=false')
+  query.append('fieldSelector', 'spec.authorDeleted=false')
+  if (selectedLinkName.value) {
+    query.append('fieldSelector', `spec.linkName=${selectedLinkName.value}`)
+  }
+  try {
+    const { data } = await axiosInstance.get<ListResult<FriendMoment>>(
+      `/apis/fireside.timxs.com/v1alpha1/friendmoments?${query.toString()}`,
+    )
+    const targets = data.items.filter((m) => !m.metadata.deletionTimestamp)
+    if (!targets.length) {
+      Toast.info('没有未读')
+      return
+    }
+    const unreadDelta = new Map<string, number>()
+    let done = 0
+    for (const moment of targets) {
+      const { data: latest } = await axiosInstance.get<FriendMoment>(
+        `/apis/fireside.timxs.com/v1alpha1/friendmoments/${moment.metadata.name}`,
+      )
+      if (latest.spec.read) continue
+      latest.spec.read = true
+      await axiosInstance.put(
+        `/apis/fireside.timxs.com/v1alpha1/friendmoments/${moment.metadata.name}`,
+        latest,
+      )
+      done++
+      const linkName = latest.spec.linkName
+      if (linkName) unreadDelta.set(linkName, (unreadDelta.get(linkName) ?? 0) - 1)
+    }
+    for (const [linkName, delta] of unreadDelta) {
+      await persistCountDelta(linkName, 0, delta)
+    }
+    Toast.success(done ? `已读 ${done} 条` : '没有未读')
+    await fetchMoments()
+  } catch (e) {
+    Toast.error(errorMessage(e, '操作失败'))
+  }
+}
+
+async function batchUpdate(action: 'read' | 'hide') {
+  const targets = visibleMoments.value.filter((m) => selectedNames.value.has(m.metadata.name))
+  if (!targets.length) return
+  const itemDelta = new Map<string, number>()
+  const unreadDelta = new Map<string, number>()
+  let done = 0
+  for (const moment of targets) {
+    try {
+      const { data: latest } = await axiosInstance.get<FriendMoment>(
+        `/apis/fireside.timxs.com/v1alpha1/friendmoments/${moment.metadata.name}`,
+      )
+      const linkName = latest.spec.linkName
+      if (action === 'read') {
+        if (latest.spec.read) continue
+        latest.spec.read = true
+        if (linkName && !latest.spec.hidden && !latest.spec.authorDeleted) {
+          unreadDelta.set(linkName, (unreadDelta.get(linkName) ?? 0) - 1)
+        }
+      } else {
+        if (latest.spec.hidden || latest.spec.authorDeleted) continue
+        latest.spec.hidden = true
+        if (linkName) {
+          itemDelta.set(linkName, (itemDelta.get(linkName) ?? 0) - 1)
+          if (!latest.spec.read) {
+            unreadDelta.set(linkName, (unreadDelta.get(linkName) ?? 0) - 1)
+          }
+        }
+      }
+      await axiosInstance.put(
+        `/apis/fireside.timxs.com/v1alpha1/friendmoments/${moment.metadata.name}`,
+        latest,
+      )
+      done++
+    } catch {
+      // 单条失败跳过，其余继续；计数以实际写成功的为准
+    }
+  }
+  const linkNames = new Set([...itemDelta.keys(), ...unreadDelta.keys()])
+  for (const linkName of linkNames) {
+    await persistCountDelta(linkName, itemDelta.get(linkName) ?? 0, unreadDelta.get(linkName) ?? 0)
+  }
+  clearSelection()
+  Toast.success(`已隐藏 ${done} 条`)
+  await fetchMoments()
 }
 
 function clearMoments() {
@@ -416,7 +629,7 @@ function clearMoments() {
         const { data } = await axiosInstance.post<ClearResponse>(
           `/apis/console.api.fireside.timxs.com/v1alpha1/links/${selectedLinkName.value || '-'}/clear-moments`,
         )
-        Toast.success(`已清空 ${data.deletedCount} 条动态`)
+        Toast.success(`已清空 ${data.deletedCount} 条`)
         page.value = 1
         await reload()
       } catch (e) {
@@ -471,8 +684,11 @@ onMounted(reload)
             <span class="fs-source__icon">
               <RiRssLine />
             </span>
-            <span class="fs-source__name">全部动态</span>
-            <span class="fs-source__count">{{ totalItemCount }}</span>
+            <span class="fs-source__main">
+              <span class="fs-source__name">全部动态</span>
+              <span class="fs-source__site">所有订阅</span>
+            </span>
+            <span v-if="totalUnreadCount" class="fs-source__unread">{{ totalUnreadCount }}</span>
           </button>
           <VLoading v-if="loadingLinks && !links.length" />
           <template v-else>
@@ -495,17 +711,22 @@ onMounted(reload)
               <span v-else class="fs-source__icon">
                 <RiRssLine />
               </span>
-              <span class="fs-source__name">
-                {{ displayNameOf(link) }}
-                <em v-if="isPaused(link)" class="fs-source__paused">暂停</em>
+              <span class="fs-source__main">
+                <span class="fs-source__name">
+                  {{ displayNameOf(link) }}
+                  <em v-if="isPaused(link)" class="fs-source__paused">暂停</em>
+                </span>
+                <span v-if="siteLabelOf(link)" class="fs-source__site">{{ siteLabelOf(link) }}</span>
               </span>
               <span
                 v-if="statusDotClass(link)"
+                v-tooltip="statusDotTitle(link)"
                 class="fs-dot"
                 :class="statusDotClass(link)"
-                :title="statusDotTitle(link)"
               ></span>
-              <span class="fs-source__count">{{ itemCountOf(link) }}</span>
+              <span v-if="unreadCountOf(link)" class="fs-source__unread">{{
+                unreadCountOf(link)
+              }}</span>
             </button>
             <div v-if="!links.length" class="fs-sidebar__empty">
               还没有订阅。在「链接」中编辑友链，填写“动态 RSS 地址”即可订阅。
@@ -522,18 +743,15 @@ onMounted(reload)
             <div class="fs-brief__heading">
               <strong class="fs-brief__title">{{ selectedTitle }}</strong>
               <span
+                v-tooltip="selectedStatusMeta.description"
                 class="fs-badge"
                 :class="`is-${selectedStatusMeta.tone}`"
-                :title="selectedStatusMeta.description"
               >
                 <span class="fs-badge__dot"></span>
                 {{ selectedStatusMeta.label }}
               </span>
             </div>
             <span class="fs-brief__meta">{{ selectedMeta }}</span>
-            <span v-if="selectedLink && selectedStatus?.spec?.rssUrl" class="fs-brief__url">
-              {{ selectedStatus.spec.rssUrl }}
-            </span>
             <span v-if="selectedStatusMeta.description" class="fs-brief__error">
               {{ selectedStatusMeta.description }}
             </span>
@@ -545,16 +763,24 @@ onMounted(reload)
             <button
               type="button"
               class="fs-tab"
-              :class="{ 'is-active': !showHidden }"
-              @click="selectTab(false)"
+              :class="{ 'is-active': !showHidden && !showUnread }"
+              @click="selectTab('all')"
             >
               全部
             </button>
             <button
               type="button"
               class="fs-tab"
+              :class="{ 'is-active': showUnread }"
+              @click="selectTab('unread')"
+            >
+              未读
+            </button>
+            <button
+              type="button"
+              class="fs-tab"
               :class="{ 'is-active': showHidden }"
-              @click="selectTab(true)"
+              @click="selectTab('hidden')"
             >
               已隐藏
             </button>
@@ -570,7 +796,7 @@ onMounted(reload)
                 @click="sync(selectedLinkName, false)"
               >
                 <template #icon>
-                  <RiRefreshLine />
+                  <MgRefresh2Line />
                 </template>
                 同步当前
               </VButton>
@@ -583,7 +809,7 @@ onMounted(reload)
                 @click="sync('-', true)"
               >
                 <template #icon>
-                  <RiRefreshLine />
+                  <MgRefresh2Line />
                 </template>
                 同步全部
               </VButton>
@@ -595,8 +821,8 @@ onMounted(reload)
                 @click="togglePause"
               >
                 <template #icon>
-                  <RiPlayCircleLine v-if="isPaused(selectedLink)" />
-                  <RiPauseCircleLine v-else />
+                  <MgPlayCircleLine v-if="isPaused(selectedLink)" />
+                  <MgPauseCircleLine v-else />
                 </template>
                 {{ isPaused(selectedLink) ? '恢复同步' : '暂停同步' }}
               </VButton>
@@ -610,15 +836,42 @@ onMounted(reload)
                 @click="clearMoments"
               >
                 <template #icon>
-                  <RiDeleteBinLine />
+                  <MgDelete2Line />
                 </template>
                 清空{{ selectedLink ? '当前' : '全部' }}
               </VButton>
               <VButton size="sm" ghost :loading="loadingList" @click="reload()">
                 <template #icon>
-                  <RiRefreshLine />
+                  <MgRefresh2Line />
                 </template>
                 刷新列表
+              </VButton>
+              <VButton
+                v-if="!showHidden"
+                v-permission="['plugin:fireside:manage']"
+                size="sm"
+                ghost
+                :disabled="!visibleMoments.length"
+                @click="markAllRead"
+              >
+                <template #icon>
+                  <MgCheckLine />
+                </template>
+                全部标为已读
+              </VButton>
+              <VButton
+                v-if="!showHidden"
+                v-permission="['plugin:fireside:manage']"
+                size="sm"
+                ghost
+                :type="selecting ? 'primary' : 'default'"
+                :disabled="!selectableMoments.length"
+                @click="toggleSelecting"
+              >
+                <template #icon>
+                  <MgMultiselectLine />
+                </template>
+                {{ selecting ? '取消选择' : '批量选择' }}
               </VButton>
             </VSpace>
           </div>
@@ -626,10 +879,25 @@ onMounted(reload)
 
         <!-- 列表区对齐官方：VCard body 放内容，footer 放 VPagination（顶部分割线 + 12/16 内边距） -->
         <VCard :body-class="['!p-0']">
+          <div v-if="selecting && selectableMoments.length" class="fs-batch">
+            <label class="fs-batch__all">
+              <input type="checkbox" :checked="allSelected" @change="toggleSelectAll" />
+              全选本页
+            </label>
+            <span class="fs-batch__count">已选 {{ selectedNames.size }} 条</span>
+            <VButton
+              v-if="!showHidden"
+              size="sm"
+              :disabled="!selectedNames.size"
+              @click="batchUpdate('hide')"
+            >
+              隐藏所选
+            </VButton>
+          </div>
           <VLoading v-if="loadingList && !visibleMoments.length" />
           <VEmpty
             v-else-if="!visibleMoments.length"
-            :title="showHidden ? '没有已隐藏的动态' : '暂无友链动态'"
+            :title="emptyTitle"
             :message="
               showHidden
                 ? '在「全部」列表中隐藏的条目会出现在这里'
@@ -663,6 +931,13 @@ onMounted(reload)
           </VEmpty>
           <ul v-else class="fs-list">
             <li v-for="moment in visibleMoments" :key="moment.metadata.name" class="fs-item">
+              <label v-if="selecting && !moment.spec.authorDeleted" class="fs-item__check">
+                <input
+                  type="checkbox"
+                  :checked="selectedNames.has(moment.metadata.name)"
+                  @change="toggleSelected(moment.metadata.name)"
+                />
+              </label>
               <!-- 头像仅在「全部动态」混排时显示，选中单个友链后来源已明确、行更紧凑 -->
               <template v-if="!selectedLinkName">
                 <img
@@ -679,6 +954,16 @@ onMounted(reload)
               </template>
               <div class="fs-item__body">
                 <div class="fs-item__head">
+                  <span
+                    v-if="moment.spec.authorDeleted"
+                    v-tooltip="'作者已删除'"
+                    class="fs-state fs-state--deleted"
+                  ></span>
+                  <span
+                    v-else-if="!moment.spec.read && !showHidden"
+                    v-tooltip="'未读'"
+                    class="fs-state fs-state--unread"
+                  ></span>
                   <span class="fs-item__author">{{ moment.spec.author }}</span>
                   <span class="fs-item__time">{{ formatDate(moment.spec.pubDate) }}</span>
                 </div>
@@ -700,25 +985,45 @@ onMounted(reload)
                 </div>
               </div>
               <div class="fs-item__actions">
-                <a
-                  class="fs-item__action"
+                <VButton
+                  v-if="!moment.spec.authorDeleted"
+                  v-permission="['plugin:fireside:manage']"
+                  v-tooltip="moment.spec.read ? '标为未读' : '标为已读'"
+                  size="sm"
+                  ghost
+                  @click="toggleRead(moment)"
+                >
+                  <template #icon>
+                    <MgMailOpenLine v-if="moment.spec.read" />
+                    <MgMailLine v-else />
+                  </template>
+                </VButton>
+                <VButton
+                  v-tooltip="'查看原文'"
+                  size="sm"
+                  ghost
+                  tag="a"
                   :href="moment.spec.postLink"
                   target="_blank"
-                  rel="noreferrer"
-                  title="查看原文"
+                  rel="noopener noreferrer"
                 >
-                  <RiExternalLinkLine />
-                </a>
-                <button
+                  <template #icon>
+                    <MgExternalLinkLine />
+                  </template>
+                </VButton>
+                <VButton
+                  v-if="!moment.spec.authorDeleted"
                   v-permission="['plugin:fireside:manage']"
-                  type="button"
-                  class="fs-item__action"
-                  :title="showHidden ? '恢复展示' : '隐藏（不再对外展示，也不会重新抓取）'"
+                  v-tooltip="showHidden ? '恢复' : '隐藏'"
+                  size="sm"
+                  ghost
                   @click="toggleHidden(moment)"
                 >
-                  <RiEyeLine v-if="showHidden" />
-                  <RiEyeOffLine v-else />
-                </button>
+                  <template #icon>
+                    <MgEye2Line v-if="showHidden" />
+                    <MgEyeCloseLine v-else />
+                  </template>
+                </VButton>
               </div>
             </li>
           </ul>
@@ -838,6 +1143,9 @@ onMounted(reload)
 /* 选中态对齐官方列表：gray-100 底 + 左侧主色指示条 */
 .fs-source.is-active {
   background: #f3f4f6;
+}
+
+.fs-source.is-active .fs-source__name {
   font-weight: 600;
 }
 
@@ -875,12 +1183,28 @@ onMounted(reload)
   font-size: 0.75rem;
 }
 
-.fs-source__name {
+.fs-source__main {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  gap: 0.125rem;
   min-width: 0;
+}
+
+.fs-source__name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.fs-source__site {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1rem;
+  color: var(--fs-text-muted);
 }
 
 .fs-source__paused {
@@ -891,13 +1215,17 @@ onMounted(reload)
   color: #ea580c;
 }
 
-.fs-source__count {
+.fs-source__unread {
   flex: none;
-  min-width: 1.25rem;
-  text-align: right;
-  font-size: 0.75rem;
-  font-weight: 400;
-  color: var(--fs-text-muted);
+  min-width: 1rem;
+  padding: 0 0.3125rem;
+  border-radius: 999px;
+  background: #22c55e;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1rem;
+  text-align: center;
+  color: #fff;
   font-variant-numeric: tabular-nums;
 }
 
@@ -983,15 +1311,6 @@ onMounted(reload)
   line-height: 1.125rem;
 }
 
-.fs-brief__url {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #a1a1aa;
-  font-size: 0.75rem;
-  line-height: 1.125rem;
-}
-
 .fs-brief__error {
   color: #b91c1c;
   font-size: 0.75rem;
@@ -1063,37 +1382,49 @@ onMounted(reload)
   backdrop-filter: blur(14px);
 }
 
-/* Tabs：对齐链接订阅页 ReadStatusTabs 的分段形态 */
+/* Tabs：对齐链接订阅页的分段筛选，选中项为深色块 */
 .fs-tabs {
   display: inline-flex;
   flex: none;
   gap: 0.25rem;
-  border: 1px solid var(--fs-border);
-  border-radius: 6px;
-  background: #f9fafb;
-  padding: 0.1875rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fafafa;
+  padding: 0.25rem;
 }
 
 .fs-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 3.5rem;
+  height: 2rem;
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   background: none;
-  padding: 0.25rem 0.75rem;
-  font-size: 0.75rem;
-  color: var(--fs-text-muted);
+  padding: 0 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: #52525b;
   cursor: pointer;
-  transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition:
+    background-color 0.18s,
+    box-shadow 0.18s,
+    color 0.18s;
 }
 
 .fs-tab:hover {
-  color: var(--fs-text);
+  color: #18181b;
 }
 
 .fs-tab.is-active {
-  background: #fff;
-  color: var(--fs-text);
-  font-weight: 600;
-  box-shadow: var(--fs-shadow);
+  background: #18181b;
+  color: #fafafa;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.16);
+}
+
+.fs-tab.is-active:hover {
+  color: #fafafa;
 }
 
 .fs-toolbar__actions {
@@ -1154,8 +1485,49 @@ onMounted(reload)
 
 .fs-item__head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 0.5rem;
+}
+
+.fs-state {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: none;
+  border-radius: 50%;
+}
+
+.fs-state--unread {
+  background: #22c55e;
+}
+
+.fs-state--deleted {
+  background: #ef4444;
+}
+
+.fs-item__check {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+.fs-batch {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border-bottom: 1px solid #f4f4f5;
+  padding: 0.625rem 1rem;
+  font-size: 0.8125rem;
+}
+
+.fs-batch__all {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  cursor: pointer;
+}
+
+.fs-batch__count {
+  color: var(--fs-text-muted);
 }
 
 .fs-item__author {
@@ -1204,10 +1576,20 @@ onMounted(reload)
 }
 
 /* 行操作：触屏常显；精细指针设备上 hover/focus 浮现，避免点不到 */
+/* 组件 sm 图标槽只有 0.75rem，官方订阅列表的操作图标是 1rem */
+.fs-item__actions :deep(.btn-icon) {
+  width: 1rem;
+  height: 1rem;
+  margin-right: 0;
+  color: #52525b;
+}
+
 .fs-item__actions {
   display: flex;
   flex: none;
-  flex-direction: column;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-self: flex-start;
   gap: 0.25rem;
   opacity: 1;
   transition: opacity 150ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -1222,27 +1604,6 @@ onMounted(reload)
   .fs-item:focus-within .fs-item__actions {
     opacity: 1;
   }
-}
-
-.fs-item__action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  border: none;
-  border-radius: 6px;
-  background: none;
-  padding: 0;
-  font-size: 0.875rem;
-  color: var(--fs-text-muted);
-  cursor: pointer;
-  transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.fs-item__action:hover {
-  background: #f4f4f5;
-  color: var(--fs-text);
 }
 
 </style>

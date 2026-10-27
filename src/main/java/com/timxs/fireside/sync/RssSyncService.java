@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.stream.Collectors;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -228,6 +229,7 @@ public class RssSyncService {
             return;
         }
         spec.setItemCount(0L);
+        spec.setUnreadCount(0L);
         client.update(status);
     }
 
@@ -290,6 +292,9 @@ public class RssSyncService {
                 .map(dated -> mapEntry(dated.entry(), feed, rssUrl, link, dated.pubDate()))
                 .filter(Objects::nonNull)
                 .toList();
+            // 保留窗口内、feed 已不再包含的可见条目标为作者已删除（不占保留名额、前台不展示）；
+            // 比窗口最旧一条更早的条目不动——feed 本来就不会返回那么旧的内容，分不出是删除还是未返回
+            int removed = markAuthorDeleted(linkName, specs, fetchedAt);
             int created = 0;
             int updated = 0;
             for (FriendMoment.FriendMomentSpec spec : specs) {
@@ -310,8 +315,8 @@ public class RssSyncService {
             }
             TrimResult trim = trimToRetain(linkName, retain);
             upsertFeedStatus(linkName, rssUrl, fetchedAt, null, trim);
-            log.info("[围炉] 同步友链 [{}] 完成：新增 {} 条，更新 {} 条，清理 {} 条",
-                linkName, created, updated, trim.trimmed());
+            log.info("[围炉] 同步友链 [{}] 完成：新增 {} 条，更新 {} 条，作者删除 {} 条，清理 {} 条",
+                linkName, created, updated, removed, trim.trimmed());
             return new LinkSyncResult(linkName, displayName, created, updated, trim.trimmed(),
                 null);
         } catch (Exception e) {
@@ -353,6 +358,7 @@ public class RssSyncService {
                 spec.setFailureCount(0);
                 if (trim != null) {
                     spec.setItemCount(trim.itemCount());
+                    spec.setUnreadCount(trim.unreadCount());
                     spec.setLatestPublishedAt(trim.latestPublishedAt());
                 }
             } else {
@@ -722,15 +728,18 @@ public class RssSyncService {
 
     /**
      * 已存在条目的内容变更：哈希相同（含双方都为空）直接跳过；不同则只覆盖展示内容，
-     * 保留发布时间与隐藏状态——发布时间在源缺失时按抓取时刻兜底，重算会把旧条目顶到
+     * 保留发布时间、已读与隐藏状态——发布时间在源缺失时按抓取时刻兜底，重算会把旧条目顶到
      * 时间线最前；隐藏是站长的手动标记，覆盖会让隐藏条目重新出现在前台。
+     * 条目重新出现在 feed 中时清除作者删除标记，红点随之消失。
      * 哈希上线前的旧数据 contentHash 为空，首次同步必然视为变更，顺带补齐媒体。
      *
      * @return 是否写入了更新
      */
     private boolean applyContentChange(FriendMoment existing, FriendMoment.FriendMomentSpec fresh) {
         FriendMoment.FriendMomentSpec spec = existing.getSpec();
-        if (spec != null && Objects.equals(spec.getContentHash(), fresh.getContentHash())) {
+        boolean resurrected = spec != null && Boolean.TRUE.equals(spec.getAuthorDeleted());
+        if (spec != null && !resurrected
+            && Objects.equals(spec.getContentHash(), fresh.getContentHash())) {
             return false;
         }
         if (spec == null) {
@@ -741,9 +750,56 @@ public class RssSyncService {
             spec.setContentText(fresh.getContentText());
             spec.setMedia(fresh.getMedia());
             spec.setContentHash(fresh.getContentHash());
+            spec.setAuthorDeleted(null);
         }
         client.update(existing);
         return true;
+    }
+
+    /**
+     * 把保留窗口内从 feed 消失的可见条目标为作者已删除。
+     * 下界取本次保留窗口内最旧一条的发布时间：比它更早的本地条目 feed 本来就不会返回，
+     * 分不出是作者删除还是未返回，故不动。窗口为空（feed 没有可用条目）时不标记，
+     * 避免一次抓取失败把全部条目误标为删除。
+     *
+     * @return 本次新标记的条数
+     */
+    private int markAuthorDeleted(String linkName, List<FriendMoment.FriendMomentSpec> window,
+        Instant fetchedAt) {
+        Instant oldest = window.stream()
+            .map(FriendMoment.FriendMomentSpec::getPubDate)
+            .filter(Objects::nonNull)
+            .min(Comparator.naturalOrder())
+            .orElse(null);
+        if (oldest == null) {
+            return 0;
+        }
+        Set<String> liveLinks = window.stream()
+            .map(FriendMoment.FriendMomentSpec::getPostLink)
+            .collect(Collectors.toSet());
+        int marked = 0;
+        for (FriendMoment item : listByLink(linkName)) {
+            FriendMoment.FriendMomentSpec spec = item.getSpec();
+            if (spec == null || Boolean.TRUE.equals(spec.getHidden())
+                || Boolean.TRUE.equals(spec.getAuthorDeleted())) {
+                continue;
+            }
+            Instant pubDate = spec.getPubDate() != null ? spec.getPubDate() : fetchedAt;
+            if (pubDate.isBefore(oldest) || liveLinks.contains(spec.getPostLink())) {
+                continue;
+            }
+            spec.setAuthorDeleted(true);
+            client.update(item);
+            marked++;
+        }
+        return marked;
+    }
+
+    private List<FriendMoment> listByLink(String linkName) {
+        var options = ListOptions.builder()
+            .fieldQuery(equal("spec.linkName", linkName))
+            .build();
+        return client.listAll(FriendMoment.class, options, Sort.unsorted());
     }
 
     /**
@@ -782,25 +838,28 @@ public class RssSyncService {
         }
     }
 
-    private record TrimResult(int trimmed, long itemCount, Instant latestPublishedAt) {
+    private record TrimResult(int trimmed, long itemCount, long unreadCount,
+                               Instant latestPublishedAt) {
     }
 
     /**
-     * 每个友链的可见条目最多保留 retain 条，超出按 pubDate 升序删最旧；
-     * 隐藏条目不参与清理——用户手动标记的条目豁免保留策略（官方链接插件 retention
-     * 的 unsavedFilter 同款原则：favorite/readLater 条目不被清理），且它们是
-     * postLink 去重的墓碑，被清掉后若同条目仍在 feed 窗口内会以可见状态复活；
-     * 随取消订阅的级联清理删除。顺带返回保留条数与最新发布时间供状态回写。
+     * 每个友链对外展示的条目最多保留 retain 条，超出按 pubDate 升序删最旧。
+     * 手动隐藏与作者已删除都不占名额也不参与清理：前者是去重墓碑（被清掉后同条目
+     * 仍在 feed 窗口内会以可见状态复活），后者是作者删除的留档，两者都随取消订阅
+     * 的级联清理删除。顺带返回展示条数、未读数与最新发布时间供状态回写。
      */
     private TrimResult trimToRetain(String linkName, int retain) {
-        var options = ListOptions.builder()
-            .fieldQuery(equal("spec.linkName", linkName))
-            .build();
-        List<FriendMoment> all = client.listAll(FriendMoment.class, options,
-            Sort.by(Sort.Order.asc("spec.pubDate")));
+        List<FriendMoment> all = listByLink(linkName).stream()
+            .sorted(Comparator.comparing(
+                fm -> fm.getSpec() == null ? null : fm.getSpec().getPubDate(),
+                Comparator.nullsFirst(Comparator.naturalOrder())))
+            .toList();
         List<FriendMoment> visible = all.stream()
-            .filter(fm -> fm.getSpec() == null
-                || !Boolean.TRUE.equals(fm.getSpec().getHidden()))
+            .filter(fm -> {
+                var spec = fm.getSpec();
+                return spec == null || !Boolean.TRUE.equals(spec.getHidden())
+                    && !Boolean.TRUE.equals(spec.getAuthorDeleted());
+            })
             .toList();
         int excess = visible.size() - retain;
         int trimmed = 0;
@@ -820,11 +879,15 @@ public class RssSyncService {
                 log.warn("[围炉] 清理条目 [{}] 失败: {}", name, e.getMessage());
             }
         }
-        // itemCount 只计可见条目（隐藏是去重墓碑，不计入侧边栏「条数」）
+        // 展示数与未读数都不计隐藏和作者已删除（红点条目不占保留名额）
         long itemCount = (long) visible.size() - trimmed;
-        Instant latestPub = all.isEmpty() ? null
+        long unreadCount = visible.stream()
+            .skip(trimmed)
+            .filter(fm -> fm.getSpec() != null && !Boolean.TRUE.equals(fm.getSpec().getRead()))
+            .count();
+        Instant latestPub = all.isEmpty() || all.get(all.size() - 1).getSpec() == null ? null
             : all.get(all.size() - 1).getSpec().getPubDate();
-        return new TrimResult(trimmed, itemCount, latestPub);
+        return new TrimResult(trimmed, itemCount, unreadCount, latestPub);
     }
 
     /**

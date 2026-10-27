@@ -28,6 +28,7 @@ export interface FeedStatus {
     failureCount?: number | null
     latestPublishedAt?: string | null
     itemCount?: number | null
+    unreadCount?: number | null
   }
 }
 
@@ -46,6 +47,8 @@ export interface FriendMoment {
     media?: { type: string; url: string }[]
     pubDate?: string
     hidden?: boolean
+    authorDeleted?: boolean
+    read?: boolean
   }
 }
 

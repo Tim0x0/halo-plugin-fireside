@@ -700,11 +700,12 @@ public class FiresideFinderImpl {
     }
 
     private ListOptions friendOptions(String linkName, TimelineCursor cursor) {
-        // 隐藏条目不对外输出（timeline / listFriends / 公开 API 同走此查询）；
-        // 同步创建条目时不写 hidden（为 null），索引函数已归一为 false，equal false 能全部命中
+        // 手动隐藏与作者已删除都不对外输出（timeline / listFriends / 公开 API 同走此查询）；
+        // 同步创建条目时不写这两个标记（为 null），索引函数已归一为 false，equal false 能全部命中
         var query = and(
             isNull("metadata.deletionTimestamp"),
-            equal("spec.hidden", false)
+            equal("spec.hidden", false),
+            equal("spec.authorDeleted", false)
         );
         if (StringUtils.isNotBlank(linkName)) {
             query = and(query, equal("spec.linkName", linkName));

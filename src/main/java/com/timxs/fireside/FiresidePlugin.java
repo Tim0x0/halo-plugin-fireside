@@ -37,11 +37,19 @@ public class FiresidePlugin extends BasePlugin {
                 .indexFunc(fm -> fm.getSpec() == null ? null : fm.getSpec().getPostLink()));
             indexSpecs.add(IndexSpecs.<FriendMoment, Instant>single("spec.pubDate", Instant.class)
                 .indexFunc(fm -> fm.getSpec() == null ? null : fm.getSpec().getPubDate()));
-            // 同步创建条目时不写 hidden（值为 null），索引统一归一为 false，
-            // 保证 equal("spec.hidden", false) 能命中全部未隐藏条目
+            // 同步创建条目时不写 hidden / authorDeleted（值为 null），索引统一归一为 false，
+            // 保证 equal false 能命中全部未标记条目
             indexSpecs.add(IndexSpecs.<FriendMoment, Boolean>single("spec.hidden", Boolean.class)
                 .indexFunc(fm -> fm.getSpec() != null
                     && Boolean.TRUE.equals(fm.getSpec().getHidden())));
+            indexSpecs.add(IndexSpecs.<FriendMoment, Boolean>single("spec.authorDeleted",
+                    Boolean.class)
+                .indexFunc(fm -> fm.getSpec() != null
+                    && Boolean.TRUE.equals(fm.getSpec().getAuthorDeleted())));
+            // 未读是默认态（read 为 null），归一为 false 才能用 equal false 筛出未读
+            indexSpecs.add(IndexSpecs.<FriendMoment, Boolean>single("spec.read", Boolean.class)
+                .indexFunc(fm -> fm.getSpec() != null
+                    && Boolean.TRUE.equals(fm.getSpec().getRead())));
         });
         schemeManager.register(FeedStatus.class);
     }
