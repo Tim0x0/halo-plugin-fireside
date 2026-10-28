@@ -34,6 +34,7 @@ import {
   RSS_URL_ANNO,
   type ClearResponse,
   type FeedStatus,
+  type MarkReadResponse,
   type FriendMoment,
   type Link,
   type ListResult,
@@ -56,6 +57,7 @@ const selecting = ref(false)
 const selectedNames = ref<Set<string>>(new Set())
 
 const loadingList = ref(false)
+const markingAllRead = ref(false)
 const loadingLinks = ref(false)
 const syncingLink = ref(false)
 const syncingAll = ref(false)
@@ -524,48 +526,24 @@ function toggleSelectAll() {
  * 批量标为已读或隐藏。逐条取最新版本再写，避免覆盖同步刚补上的内容；
  * 计数按每个友链汇总后各写一次。
  */
-/** 全部标为已读：作用于当前选中的作者，未选作者时作用于全部，含未加载的更早条目 */
+/**
+ * 全部标为已读：作用于当前选中的作者，未选作者时作用于全部，含未加载的更早条目。
+ * 一次请求交给后端批量标记并归零未读数，避免逐条 GET+PUT 的请求风暴。
+ */
 async function markAllRead() {
-  const query = new URLSearchParams()
-  query.append('size', '1000')
-  query.append('fieldSelector', 'spec.hidden=false')
-  query.append('fieldSelector', 'spec.read=false')
-  query.append('fieldSelector', 'spec.authorDeleted=false')
-  if (selectedLinkName.value) {
-    query.append('fieldSelector', `spec.linkName=${selectedLinkName.value}`)
-  }
+  if (markingAllRead.value) return
+  markingAllRead.value = true
+  const name = selectedLinkName.value || '-'
   try {
-    const { data } = await axiosInstance.get<ListResult<FriendMoment>>(
-      `/apis/fireside.timxs.com/v1alpha1/friendmoments?${query.toString()}`,
+    const { data } = await axiosInstance.post<MarkReadResponse>(
+      `/apis/console.api.fireside.timxs.com/v1alpha1/links/${name}/mark-read`,
     )
-    const targets = data.items.filter((m) => !m.metadata.deletionTimestamp)
-    if (!targets.length) {
-      Toast.info('没有未读')
-      return
-    }
-    const unreadDelta = new Map<string, number>()
-    let done = 0
-    for (const moment of targets) {
-      const { data: latest } = await axiosInstance.get<FriendMoment>(
-        `/apis/fireside.timxs.com/v1alpha1/friendmoments/${moment.metadata.name}`,
-      )
-      if (latest.spec.read) continue
-      latest.spec.read = true
-      await axiosInstance.put(
-        `/apis/fireside.timxs.com/v1alpha1/friendmoments/${moment.metadata.name}`,
-        latest,
-      )
-      done++
-      const linkName = latest.spec.linkName
-      if (linkName) unreadDelta.set(linkName, (unreadDelta.get(linkName) ?? 0) - 1)
-    }
-    for (const [linkName, delta] of unreadDelta) {
-      await persistCountDelta(linkName, 0, delta)
-    }
-    Toast.success(done ? `已读 ${done} 条` : '没有未读')
-    await fetchMoments()
+    Toast.success(data.updatedCount ? `已读 ${data.updatedCount} 条` : '没有未读')
+    await reload()
   } catch (e) {
     Toast.error(errorMessage(e, '操作失败'))
+  } finally {
+    markingAllRead.value = false
   }
 }
 
@@ -671,7 +649,10 @@ onMounted(reload)
       <!-- 左侧：订阅侧边栏 -->
       <aside class="fs-sidebar">
         <div class="fs-sidebar__header">
-          <span class="fs-sidebar__title">订阅</span>
+          <span class="fs-sidebar__title">
+            <span>RSS</span>
+            <strong>订阅</strong>
+          </span>
           <span class="fs-sidebar__count">{{ links.length }}</span>
         </div>
         <div class="fs-sidebar__body">
@@ -851,7 +832,8 @@ onMounted(reload)
                 v-permission="['plugin:fireside:manage']"
                 size="sm"
                 ghost
-                :disabled="!visibleMoments.length"
+                :loading="markingAllRead"
+                :disabled="mutating || markingAllRead"
                 @click="markAllRead"
               >
                 <template #icon>
@@ -998,19 +980,18 @@ onMounted(reload)
                     <MgMailLine v-else />
                   </template>
                 </VButton>
-                <VButton
+                <!-- 外链必须是原生 a：VButton 没有 tag prop，tag="a" 实际仍渲染成 button，href 不跳转 -->
+                <a
+                  v-if="moment.spec.postLink"
                   v-tooltip="'查看原文'"
-                  size="sm"
-                  ghost
-                  tag="a"
+                  class="fs-item__origin"
                   :href="moment.spec.postLink"
                   target="_blank"
                   rel="noopener noreferrer"
+                  aria-label="查看原文"
                 >
-                  <template #icon>
-                    <MgExternalLinkLine />
-                  </template>
-                </VButton>
+                  <MgExternalLinkLine />
+                </a>
                 <VButton
                   v-if="!moment.spec.authorDeleted"
                   v-permission="['plugin:fireside:manage']"
@@ -1089,34 +1070,56 @@ onMounted(reload)
   .fs-sidebar {
     position: sticky;
     top: 1rem;
-    width: 16rem;
+    /* 宽度对齐链接插件订阅侧边栏（18rem） */
+    width: 18rem;
+    max-height: calc(100vh - 2rem);
   }
 }
 
+/* 标题区对齐链接插件：两行标题（眉题 + 加粗）配描边计数胶囊，无分割线 */
 .fs-sidebar__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--fs-border);
-  background: #f9fafb;
-  padding: 0.625rem 0.875rem;
+  gap: 0.75rem;
+  padding: 0.75rem 0.75rem 0;
 }
 
 .fs-sidebar__title {
-  color: var(--fs-text);
-  font-size: 0.8125rem;
-  font-weight: 600;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.fs-sidebar__title span {
+  color: #71717a;
+  font-size: 0.6875rem;
+  font-weight: 650;
+  line-height: 0.875rem;
+}
+
+.fs-sidebar__title strong {
+  color: #18181b;
+  font-size: 0.9375rem;
+  font-weight: 650;
+  line-height: 1.25rem;
 }
 
 .fs-sidebar__count {
-  color: var(--fs-text-muted);
+  color: #71717a;
   font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .fs-sidebar__body {
   display: flex;
   flex-direction: column;
-  padding: 0.375rem;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  overflow-y: auto;
 }
 
 .fs-source {
@@ -1124,63 +1127,64 @@ onMounted(reload)
   display: flex;
   width: 100%;
   align-items: center;
-  gap: 0.5rem;
-  border: none;
-  border-radius: 6px;
-  background: none;
-  padding: 0.5rem 0.625rem;
+  gap: 0.625rem;
+  /* 尺寸与边框对齐链接插件订阅项：8px 圆角、浅灰底、透明描边 */
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #fafafa;
+  padding: 0.625rem;
   text-align: left;
   font-size: 0.875rem;
-  color: var(--fs-text);
+  color: #3f3f46;
   cursor: pointer;
-  transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    color 0.18s ease;
 }
 
 .fs-source:hover {
-  background: #f9fafb;
+  background: #f4f4f5;
+  color: #18181b;
 }
 
-/* 选中态对齐官方列表：gray-100 底 + 左侧主色指示条 */
+/* 选中态对齐链接插件：描边 + 渐变底，不用卡片投影 */
 .fs-source.is-active {
-  background: #f3f4f6;
+  border-color: #d4d4d8;
+  background: linear-gradient(180deg, #fff, #f4f4f5);
+  color: #18181b;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.92),
+    0 1px 2px rgb(15 23 42 / 0.06);
 }
 
-.fs-source.is-active .fs-source__name {
-  font-weight: 600;
-}
-
-.fs-source.is-active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0.375rem;
-  bottom: 0.375rem;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--fs-primary);
+.fs-source.is-active .fs-source__site {
+  color: #52525b;
 }
 
 .fs-source__logo {
-  width: 1.375rem;
-  height: 1.375rem;
+  width: 1.875rem;
+  height: 1.875rem;
   flex: none;
-  border-radius: 50%;
+  border-radius: 7px;
   object-fit: cover;
-  border: 1px solid var(--fs-border);
+  border: 1px solid #e5e7eb;
   background: #fff;
 }
 
 .fs-source__icon {
   display: inline-flex;
-  width: 1.375rem;
-  height: 1.375rem;
+  width: 1.875rem;
+  height: 1.875rem;
   flex: none;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
-  background: #f3f4f6;
-  color: var(--fs-text-muted);
-  font-size: 0.75rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 7px;
+  background: #fff;
+  color: #52525b;
+  font-size: 0.875rem;
 }
 
 .fs-source__main {
@@ -1193,6 +1197,10 @@ onMounted(reload)
 
 .fs-source__name {
   overflow: hidden;
+  color: inherit;
+  font-size: 0.875rem;
+  font-weight: 650;
+  line-height: 1.25rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1204,7 +1212,7 @@ onMounted(reload)
   font-size: 0.75rem;
   font-weight: 400;
   line-height: 1rem;
-  color: var(--fs-text-muted);
+  color: #71717a;
 }
 
 .fs-source__paused {
@@ -1215,6 +1223,7 @@ onMounted(reload)
   color: #ea580c;
 }
 
+/* 未读数保留绿色徽章，不用链接插件的纯文字计数 */
 .fs-source__unread {
   flex: none;
   min-width: 1rem;
@@ -1459,13 +1468,14 @@ onMounted(reload)
   background: #fafafa;
 }
 
+/* 圆角矩形对齐前台头像（42px、圆角 6px），不再用正圆 */
 .fs-item__avatar {
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 2.625rem;
+  height: 2.625rem;
   flex: none;
-  border-radius: 50%;
+  border-radius: 6px;
   border: 1px solid var(--fs-border);
-  background: #fff;
+  background: #f0f0f0;
   object-fit: cover;
 }
 
@@ -1582,6 +1592,33 @@ onMounted(reload)
   height: 1rem;
   margin-right: 0;
   color: #52525b;
+}
+
+/* 查看原文是原生 a（VButton 不支持渲染成链接），尺寸对齐 ghost sm 图标按钮 */
+.fs-item__origin {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--borderRadius-base, 4px);
+  color: #52525b;
+  text-decoration: none;
+  transition: background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.fs-item__origin:hover {
+  background-color: #f3f4f6;
+}
+
+.fs-item__origin:active {
+  background-color: #e5e7eb;
+}
+
+.fs-item__origin svg {
+  width: 1rem;
+  height: 1rem;
 }
 
 .fs-item__actions {

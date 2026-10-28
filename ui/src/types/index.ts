@@ -82,5 +82,9 @@ export interface ClearResponse {
   deletedCount: number
 }
 
+export interface MarkReadResponse {
+  updatedCount: number
+}
+
 export const RSS_URL_ANNO = 'fireside_rss_url'
 export const PAUSED_ANNO = 'fireside_paused'

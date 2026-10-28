@@ -210,6 +210,88 @@ public class RssSyncService {
         });
     }
 
+    /**
+     * 把未读条目标为已读（linkName 为空表示全部友链），并把对应 FeedStatus 的未读数归零。
+     * 只动对外展示的条目：已隐藏与作者已删除的不计入未读，也不改它们的已读状态。
+     * 与同步共用一把锁，避免与同步回写的未读数互相覆盖；后端批量执行，
+     * 避免 Console 逐条 GET+PUT 的请求风暴。
+     *
+     * @return 实际标为已读的条目数
+     */
+    public int markAllRead(String linkName) {
+        return runLocked(() -> {
+            var builder = ListOptions.builder()
+                .andQuery(equal("spec.hidden", "false"))
+                .andQuery(equal("spec.read", "false"))
+                .andQuery(equal("spec.authorDeleted", "false"));
+            if (StringUtils.isNotBlank(linkName)) {
+                builder.andQuery(equal("spec.linkName", linkName));
+            }
+            List<FriendMoment> items =
+                client.listAll(FriendMoment.class, builder.build(), Sort.unsorted());
+            int marked = 0;
+            for (FriendMoment item : items) {
+                if (markRead(item)) {
+                    marked++;
+                }
+            }
+            zeroUnreadCounts(linkName);
+            log.info("[围炉] 全部标为已读：范围 [{}]，{} 条",
+                StringUtils.defaultIfBlank(linkName, "全部"), marked);
+            return marked;
+        });
+    }
+
+    /**
+     * 取最新版本再标已读，避免覆盖同步刚补上的内容；版本冲突的个别条目跳过，
+     * 未读数由下轮同步重算修正。
+     */
+    private boolean markRead(FriendMoment item) {
+        String name = item.getMetadata().getName();
+        try {
+            FriendMoment latest = client.fetch(FriendMoment.class, name).orElse(null);
+            if (latest == null || latest.getSpec() == null) {
+                return false;
+            }
+            var spec = latest.getSpec();
+            if (Boolean.TRUE.equals(spec.getRead()) || Boolean.TRUE.equals(spec.getHidden())
+                || Boolean.TRUE.equals(spec.getAuthorDeleted())) {
+                return false;
+            }
+            spec.setRead(true);
+            client.update(latest);
+            return true;
+        } catch (OptimisticLockingFailureException e) {
+            log.debug("[围炉] 标已读 [{}] 版本冲突，留待下轮同步重算", name);
+            return false;
+        } catch (Exception e) {
+            log.warn("[围炉] 标已读 [{}] 失败: {}", name, e.getMessage());
+            return false;
+        }
+    }
+
+    private void zeroUnreadCounts(String linkName) {
+        try {
+            if (StringUtils.isNotBlank(linkName)) {
+                client.fetch(FeedStatus.class, linkName).ifPresent(this::zeroUnreadCount);
+                return;
+            }
+            client.listAll(FeedStatus.class, ListOptions.builder().build(), Sort.unsorted())
+                .forEach(this::zeroUnreadCount);
+        } catch (Exception e) {
+            log.warn("[围炉] 全部已读后归零未读数失败: {}", e.getMessage());
+        }
+    }
+
+    private void zeroUnreadCount(FeedStatus status) {
+        var spec = status.getSpec();
+        if (spec == null || spec.getUnreadCount() == null || spec.getUnreadCount() == 0L) {
+            return;
+        }
+        spec.setUnreadCount(0L);
+        client.update(status);
+    }
+
     private void zeroItemCounts(String linkName) {
         try {
             if (StringUtils.isNotBlank(linkName)) {

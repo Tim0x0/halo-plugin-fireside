@@ -37,9 +37,9 @@ rules:
   - apiGroups: [ "fireside.timxs.com" ]
     resources: [ "friendmoments", "feedstatuses" ]
     verbs: [ "create", "patch", "update", "delete", "deletecollection" ]
-  # 手动同步与清空（子资源动作）
+  # 手动同步、清空与全部已读（子资源动作）
   - apiGroups: [ "console.api.fireside.timxs.com" ]
-    resources: [ "links/sync", "links/clear-moments" ]
+    resources: [ "links/sync", "links/clear-moments", "links/mark-read" ]
     verbs: [ "create" ]
   # 切换暂停注解需要写 Link
   - apiGroups: [ "core.halo.run" ]
