@@ -530,21 +530,30 @@ function toggleSelectAll() {
  * 全部标为已读：作用于当前选中的作者，未选作者时作用于全部，含未加载的更早条目。
  * 一次请求交给后端批量标记并归零未读数，避免逐条 GET+PUT 的请求风暴。
  */
-async function markAllRead() {
+function markAllRead() {
   if (markingAllRead.value) return
-  markingAllRead.value = true
+  // 固定弹窗打开时的目标，避免等待确认期间选择变化影响操作范围。
   const name = selectedLinkName.value || '-'
-  try {
-    const { data } = await axiosInstance.post<MarkReadResponse>(
-      `/apis/console.api.fireside.timxs.com/v1alpha1/links/${name}/mark-read`,
-    )
-    Toast.success(data.updatedCount ? `已读 ${data.updatedCount} 条` : '没有未读')
-    await reload()
-  } catch (e) {
-    Toast.error(errorMessage(e, '操作失败'))
-  } finally {
-    markingAllRead.value = false
-  }
+  const scope = selectedLink.value ? `「${selectedTitle.value}」` : '全部订阅'
+  Dialog.warning({
+    title: '全部标为已读',
+    description: `确认将${scope}中的所有未读动态标为已读吗？此操作会包含当前未加载的更早动态。`,
+    confirmType: 'primary',
+    onConfirm: async () => {
+      markingAllRead.value = true
+      try {
+        const { data } = await axiosInstance.post<MarkReadResponse>(
+          `/apis/console.api.fireside.timxs.com/v1alpha1/links/${name}/mark-read`,
+        )
+        Toast.success(data.updatedCount ? `已读 ${data.updatedCount} 条` : '没有未读')
+        await reload()
+      } catch (e) {
+        Toast.error(errorMessage(e, '操作失败'))
+      } finally {
+        markingAllRead.value = false
+      }
+    },
+  })
 }
 
 async function batchUpdate(action: 'read' | 'hide') {
@@ -772,6 +781,7 @@ onMounted(reload)
                 v-if="selectedLink"
                 v-permission="['plugin:fireside:manage']"
                 size="sm"
+                type="default"
                 :loading="syncingLink"
                 :disabled="mutating || isPaused(selectedLink)"
                 @click="sync(selectedLinkName, false)"
@@ -785,6 +795,7 @@ onMounted(reload)
                 v-else
                 v-permission="['plugin:fireside:manage']"
                 size="sm"
+                type="default"
                 :disabled="!links.length || mutating"
                 :loading="syncingAll"
                 @click="sync('-', true)"
@@ -821,17 +832,11 @@ onMounted(reload)
                 </template>
                 清空{{ selectedLink ? '当前' : '全部' }}
               </VButton>
-              <VButton size="sm" ghost :loading="loadingList" @click="reload()">
-                <template #icon>
-                  <MgRefresh2Line />
-                </template>
-                刷新列表
-              </VButton>
               <VButton
                 v-if="!showHidden"
                 v-permission="['plugin:fireside:manage']"
                 size="sm"
-                ghost
+                type="default"
                 :loading="markingAllRead"
                 :disabled="mutating || markingAllRead"
                 @click="markAllRead"
@@ -845,7 +850,6 @@ onMounted(reload)
                 v-if="!showHidden"
                 v-permission="['plugin:fireside:manage']"
                 size="sm"
-                ghost
                 :type="selecting ? 'primary' : 'default'"
                 :disabled="!selectableMoments.length"
                 @click="toggleSelecting"
@@ -854,6 +858,12 @@ onMounted(reload)
                   <MgMultiselectLine />
                 </template>
                 {{ selecting ? '取消选择' : '批量选择' }}
+              </VButton>
+              <VButton size="sm" ghost :loading="loadingList" @click="reload()">
+                <template #icon>
+                  <MgRefresh2Line />
+                </template>
+                刷新列表
               </VButton>
             </VSpace>
           </div>
@@ -973,10 +983,11 @@ onMounted(reload)
                   v-tooltip="moment.spec.read ? '标为未读' : '标为已读'"
                   size="sm"
                   ghost
+                  :class="{ 'is-read': moment.spec.read }"
                   @click="toggleRead(moment)"
                 >
                   <template #icon>
-                    <MgMailOpenLine v-if="moment.spec.read" />
+                    <MgMailOpenLine v-if="!moment.spec.read" />
                     <MgMailLine v-else />
                   </template>
                 </VButton>
@@ -1592,6 +1603,11 @@ onMounted(reload)
   height: 1rem;
   margin-right: 0;
   color: #52525b;
+}
+
+/* 已读条目的「标为未读」图标用绿色，对齐链接插件订阅列表 */
+.fs-item__actions :deep(.is-read .btn-icon) {
+  color: #16a34a;
 }
 
 /* 查看原文是原生 a（VButton 不支持渲染成链接），尺寸对齐 ghost sm 图标按钮 */
